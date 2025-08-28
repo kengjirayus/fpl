@@ -339,7 +339,9 @@ def main():
 
     with st.sidebar:
         st.header("Settings")
-        entry_id_str = st.text_input("Your FPL Team ID (ระบุ ID ทีมของคุณ)")
+        entry_id_str = st.text_input("Your FPL Team ID (ระบุ ID ทีมของคุณ)",
+        help="นำเลข ID ทีมของคุณจาก URL หลังจากเข้าสู่ระบบ FPL บนเว็บแล้ว Click ดู Points จะเห็น URL https://fantasy.premierleague.com/entry/xxxxxxx/event/2 ให้นำเลข xxxxxxx มาใส่"
+        )
         
         transfer_strategy = st.radio(
             "Transfer Strategy (เลือกรูปแบบการเปลี่ยนตัว)",
