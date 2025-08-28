@@ -463,11 +463,19 @@ def main():
                     with st.spinner("Analyzing potential transfers..."):
                         moves = suggest_transfers(pick_ids, bank=bank, free_transfers=free_transfers,
                                                   all_players=feat, strategy=transfer_strategy)
-                    if not moves:
-                        st.write("No clear positive-EV transfer found based on the selected strategy.")
-                    else:
-                        mv_df = pd.DataFrame(moves)
+                        if not moves:
+                            st.write("No clear positive-EV transfer found based on the selected strategy.")
+                        else:
+                            mv_df = pd.DataFrame(moves)
+                            
+                            # Calculate total costs
+                        total_in_cost = mv_df['in_cost'].sum()
+                        total_out_cost = mv_df['out_cost'].sum()
+
+                        st.success(f"💸 **Total In-Cost:** £{total_in_cost:.1f}m | **Total Out-Cost:** £{total_out_cost:.1f}m")
+                        
                         st.dataframe(mv_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], use_container_width=True)
+                    
 
         except requests.exceptions.HTTPError as e:
             st.error(f"Could not fetch data for Team ID {entry_id_str}. Please check if the ID is correct. (Error: {e.response.status_code})")
