@@ -36,6 +36,39 @@ from sklearn.metrics import mean_absolute_error
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
 
 ###############################
+# Slide Settings
+###############################
+st.set_page_config(layout="wide")
+
+st.markdown(
+    """
+    <style>
+    @media (max-width: 768px) {
+        /* ซ่อนเมนูแฮมเบอร์เกอร์เริ่มต้นของ Streamlit บนมือถือ */
+        .st-emotion-cache-1l02wac {
+            display: none !important;
+        }
+        /* ปรับ padding บน mobile เพื่อให้มีพื้นที่มากขึ้น */
+        .st-emotion-cache-1629p26 {
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4CAF50; font-size: 24px;">⚙️ การตั้งค่าอยู่ที่แถบด้านข้าง</h2>
+        <p style="color: #607D8B; font-size: 18px;">(คลิก >> มุมซ้ายบนเพื่อเปิด)</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+###############################
 # API helpers
 ###############################
 FPL_BASE = "https://fantasy.premierleague.com/api"
