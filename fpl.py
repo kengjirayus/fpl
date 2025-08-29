@@ -339,27 +339,31 @@ def main():
 
     with st.sidebar:
         st.header("Settings")
-        entry_id_str = st.text_input("Your FPL Team ID (ระบุ ID ทีมของคุณ)",
-        help="นำเลข ID ทีมของคุณจาก URL หลังจากเข้าสู่ระบบ FPL บนเว็บแล้ว Click ดู Points จะเห็น URL https://fantasy.premierleague.com/entry/xxxxxxx/event/2 ให้นำเลข xxxxxxx มาใส่"
-        )
-        
-        transfer_strategy = st.radio(
-            "Transfer Strategy (เลือกรูปแบบการเปลี่ยนตัว)",
-            ("Free Transfer", "Allow Hit (AI Suggest)", "Wildcard / Free Hit")
-        )
-        
-        # Only show free transfers selector for Free Transfer strategy
-        free_transfers = 1  # Default value
-        if transfer_strategy == "Free Transfer":
-            free_transfers = st.number_input(
-                "Number of Free Transfers Available (จำนวน FT ที่มี)",
-                min_value=0,
-                max_value=5,
-                value=1,
-                help="Select how many free transfers you have available (0-5)"
+        with st.form("settings_form"):
+            entry_id_str = st.text_input(
+                "Your FPL Team ID (ระบุ ID ทีมของคุณ)",
+                help="นำเลข ID ทีมของคุณจาก URL หลังจากเข้าสู่ระบบ FPL บนเว็บแล้ว Click ดู Points จะเห็น URL https://fantasy.premierleague.com/entry/xxxxxxx/event/2 ให้นำเลข xxxxxxx มาใส่"
             )
-        elif transfer_strategy == "Allow Hit (AI Suggest)":
-            free_transfers = 1  # Default to 1 FT for AI hit suggestions
+            
+            transfer_strategy = st.radio(
+                "Transfer Strategy (เลือกรูปแบบการเปลี่ยนตัว)",
+                ("Free Transfer", "Allow Hit (AI Suggest)", "Wildcard / Free Hit")
+            )
+            
+            free_transfers = 1
+            if transfer_strategy == "Free Transfer":
+                free_transfers = st.number_input(
+                    "Number of Free Transfers Available (จำนวน FT ที่มี)",
+                    min_value=0,
+                    max_value=5,
+                    value=1,
+                    help="Select how many free transfers you have available (0-5)"
+                )
+            elif transfer_strategy == "Allow Hit (AI Suggest)":
+                free_transfers = 1
+            
+            # Button to submit the form
+            submitted = st.form_submit_button("Analyze Team")
 
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
@@ -390,99 +394,100 @@ def main():
     top_tbl["pred_points"] = top_tbl["pred_points"].round(2)
     st.dataframe(top_tbl.sort_values("pred_points", ascending=False).head(25), use_container_width=True)
 
-    if entry_id_str:
-        try:
-            entry_id = int(entry_id_str)
-            entry = get_entry(entry_id)
-            ev_for_picks = cur_event or 1
-            picks = get_entry_picks(entry_id, ev_for_picks)
-            
-            st.header(f"🚀 Analysis for '{entry['name']}'")
+    if submitted:
+        if entry_id_str:
+            try:
+                entry_id = int(entry_id_str)
+                entry = get_entry(entry_id)
+                ev_for_picks = cur_event or 1
+                picks = get_entry_picks(entry_id, ev_for_picks)
+                
+                st.header(f"🚀 Analysis for '{entry['name']}'")
 
-            if transfer_strategy == "Wildcard / Free Hit":
-                st.subheader("🤖 AI Suggested Wildcard / Free Hit Team")
-                total_value = (entry.get('last_deadline_value', 1000) + entry.get('last_deadline_bank', 0)) / 10.0
-                st.info(f"Optimizing for a total budget of **£{total_value:.1f}m**")
-                
-                with st.spinner("Finding the optimal 15-man squad... this may take a moment."):
-                    wildcard_ids = optimize_wildcard_team(feat, total_value)
-                
-                if wildcard_ids:
-                    wc_squad_df = feat.loc[wildcard_ids].copy()
-                    wc_squad_df['pos'] = wc_squad_df['element_type'].map(POSITIONS)
-                    display_df = (wc_squad_df[['web_name', 'team_short', 'pos', 'now_cost', 'pred_points']]
-                                 .rename(columns={'now_cost': 'price'})
-                                 .assign(price=lambda df: (df['price']/10.0).round(1))
-                                 .sort_values('pos'))  # Changed from element_type to pos
-                    st.dataframe(display_df, use_container_width=True)
+                if transfer_strategy == "Wildcard / Free Hit":
+                    st.subheader("🤖 AI Suggested Wildcard / Free Hit Team")
+                    total_value = (entry.get('last_deadline_value', 1000) + entry.get('last_deadline_bank', 0)) / 10.0
+                    st.info(f"Optimizing for a total budget of **£{total_value:.1f}m**")
                     
-                    # Add summary stats
-                    total_points = wc_squad_df['pred_points'].sum()
-                    total_cost = wc_squad_df['now_cost'].sum() / 10.0
-                    st.success(f"Total Expected Points: **{total_points:.1f}** | Team Value: **£{total_cost:.1f}m**")
+                    with st.spinner("Finding the optimal 15-man squad... this may take a moment."):
+                        wildcard_ids = optimize_wildcard_team(feat, total_value)
+                    
+                    if wildcard_ids:
+                        wc_squad_df = feat.loc[wildcard_ids].copy()
+                        wc_squad_df['pos'] = wc_squad_df['element_type'].map(POSITIONS)
+                        display_df = (wc_squad_df[['web_name', 'team_short', 'pos', 'now_cost', 'pred_points']]
+                                     .rename(columns={'now_cost': 'price'})
+                                     .assign(price=lambda df: (df['price']/10.0).round(1))
+                                     .sort_values('pos'))
+                        st.dataframe(display_df, use_container_width=True)
+                        
+                        total_points = wc_squad_df['pred_points'].sum()
+                        total_cost = wc_squad_df['now_cost'].sum() / 10.0
+                        st.success(f"Total Expected Points: **{total_points:.1f}** | Team Value: **£{total_cost:.1f}m**")
+                    else:
+                        st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
                 else:
-                    st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
-            else:
-                bank = (picks.get("entry_history", {}).get("bank", 0)) / 10.0
-                # Use the selected number of free transfers instead of assuming 1
-                st.info(f"Bank: **£{bank:.1f}m** | Free Transfers: **{free_transfers}**")
+                    bank = (picks.get("entry_history", {}).get("bank", 0)) / 10.0
+                    st.info(f"Bank: **£{bank:.1f}m** | Free Transfers: **{free_transfers}**")
 
-                pick_ids = [p["element"] for p in picks.get("picks", [])]
-                squad_df = feat.loc[pick_ids]
+                    pick_ids = [p["element"] for p in picks.get("picks", [])]
+                    squad_df = feat.loc[pick_ids]
 
-                st.subheader("✅ Recommended Starting XI & Bench Order")
-                xi_ids, bench_ids = optimize_starting_xi(squad_df)
-                
-                # **FIX**: Add a guardrail to check if optimization was successful
-                if not xi_ids or len(xi_ids) != 11:
-                    st.error("Could not form a valid starting XI from your current squad. This can happen with unusual team structures (e.g., during pre-season).")
-                    st.write("Current Squad Composition:")
-                    st.dataframe(squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'}).assign(pos=lambda df: df['pos'].map(POSITIONS)))
-                else:
-                    xi_df = squad_df.loc[xi_ids].copy()
-                    xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
-                    xi_df['pred_points'] = xi_df['pred_points'].round(2)
-                    st.markdown("**Starting XI**")
-                    st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True)
+                    st.subheader("✅ Recommended Starting XI & Bench Order")
+                    xi_ids, bench_ids = optimize_starting_xi(squad_df)
+                    
+                    if not xi_ids or len(xi_ids) != 11:
+                        st.error("Could not form a valid starting XI from your current squad. This can happen with unusual team structures (e.g., during pre-season).")
+                        st.write("Current Squad Composition:")
+                        st.dataframe(squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'}).assign(pos=lambda df: df['pos'].map(POSITIONS)))
+                    else:
+                        xi_df = squad_df.loc[xi_ids].copy()
+                        xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
+                        xi_df['pred_points'] = xi_df['pred_points'].round(2)
+                        st.markdown("**Starting XI**")
+                        st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True)
 
-                    cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
-                    vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                    st.success(f"Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
+                        cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
+                        vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
+                        st.success(f"Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
 
-                    bench_df = squad_df.loc[bench_ids].copy()
-                    bench_gk = bench_df[bench_df['element_type'] == 1]
-                    bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
-                    ordered_bench_df = pd.concat([bench_gk, bench_outfield])
-                    ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
-                    ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
-                    st.markdown("**Bench (in order)**")
-                    st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
+                        bench_df = squad_df.loc[bench_ids].copy()
+                        bench_gk = bench_df[bench_df['element_type'] == 1]
+                        bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                        ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                        ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+                        ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
+                        st.markdown("**Bench (in order)**")
+                        st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
 
-                    st.subheader("🔄 Suggested Transfers")
-                    st.markdown(f"💡 คำแนะนำในการซื้อขายนักเตะจากทีมคุณ")
-                    with st.spinner("Analyzing potential transfers..."):
-                        moves = suggest_transfers(pick_ids, bank=bank, free_transfers=free_transfers,
-                                                  all_players=feat, strategy=transfer_strategy)
+                        st.subheader("🔄 Suggested Transfers")
+                        st.markdown(f"💡 คำแนะนำในการซื้อขายนักเตะจากทีมคุณ")
+                        with st.spinner("Analyzing potential transfers..."):
+                            moves = suggest_transfers(pick_ids, bank=bank, free_transfers=free_transfers,
+                                                      all_players=feat, strategy=transfer_strategy)
+                        
                         if not moves:
                             st.write("No clear positive-EV transfer found based on the selected strategy.")
                         else:
                             mv_df = pd.DataFrame(moves)
                             
-                            # Calculate total costs
-                        total_in_cost = mv_df['in_cost'].sum()
-                        total_out_cost = mv_df['out_cost'].sum()
+                            total_in_cost = mv_df['in_cost'].sum()
+                            total_out_cost = mv_df['out_cost'].sum()
 
-                        st.success(f"💸 **Total In-Cost:** £{total_in_cost:.1f}m | **Total Out-Cost:** £{total_out_cost:.1f}m")
-                        
-                        st.dataframe(mv_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], use_container_width=True)
-                    
+                            st.success(f"💸 **Total In-Cost:** £{total_in_cost:.1f}m | **Total Out-Cost:** £{total_out_cost:.1f}m")
+                            
+                            st.dataframe(mv_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], use_container_width=True)
 
-        except requests.exceptions.HTTPError as e:
-            st.error(f"Could not fetch data for Team ID {entry_id_str}. Please check if the ID is correct. (Error: {e.response.status_code})")
-        except (ValueError, TypeError):
-            st.error("Invalid Team ID. Please enter a numeric ID.")
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
+            except requests.exceptions.HTTPError as e:
+                st.error(f"Could not fetch data for Team ID {entry_id_str}. Please check if the ID is correct. (Error: {e.response.status_code})")
+            except (ValueError, TypeError):
+                st.error("Invalid Team ID. Please enter a numeric ID.")
+            except Exception as e:
+                st.error(f"An unexpected error occurred: {e}")
+                st.exception(e)
+        else:
+            st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
+            st.info("💡 FPL Team ID ของคุณอยู่ในแถบ **Settings** ด้านซ้ายมือ")                    
             st.exception(e)  # This will print the full traceback for debugging
 
 if __name__ == "__main__":
