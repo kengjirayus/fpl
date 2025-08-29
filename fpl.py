@@ -339,9 +339,16 @@ def main():
 
     with st.sidebar:
         st.header("Settings")
+
+        # Callback function to clear the text input
+        def reset_team_id():
+            st.session_state.team_id_input = ""
+
+        # Create a form to handle the main analysis submission
         with st.form("settings_form"):
             entry_id_str = st.text_input(
                 "Your FPL Team ID (ระบุ ID ทีมของคุณ)",
+                key="team_id_input",
                 help="นำเลข ID ทีมของคุณจาก URL หลังจากเข้าสู่ระบบ FPL บนเว็บแล้ว Click ดู Points จะเห็น URL https://fantasy.premierleague.com/entry/xxxxxxx/event/2 ให้นำเลข xxxxxxx มาใส่"
             )
             
@@ -362,8 +369,10 @@ def main():
             elif transfer_strategy == "Allow Hit (AI Suggest)":
                 free_transfers = 1
             
-            # Button to submit the form
             submitted = st.form_submit_button("Analyze Team")
+        
+        # Create a reset button outside of the form with an on_click callback
+        st.button("Reset", on_click=reset_team_id, help="ล้างค่า ID และรีเฟรชหน้าจอ")
 
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
@@ -383,16 +392,17 @@ def main():
     feat.set_index('id', inplace=True)
     feat["pred_points"] = feat["pred_points_heur"]
 
-    st.header("⭐ Top Projected Players")
-    st.markdown(f"ผู้เล่นที่คาดว่าจะทำคะแนนได้สูงสุดใน GW {target_event}")
-    
-    show_cols = ["web_name", "team_short", "element_type", "now_cost", "form", "fixture_ease", "pred_points"]
-    top_tbl = feat[show_cols].copy()
-    top_tbl.rename(columns={"element_type": "pos", "now_cost": "price"}, inplace=True)
-    top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
-    top_tbl["price"] = (top_tbl["price"] / 10.0).round(1)
-    top_tbl["pred_points"] = top_tbl["pred_points"].round(2)
-    st.dataframe(top_tbl.sort_values("pred_points", ascending=False).head(25), use_container_width=True)
+    if not submitted:
+        st.header("⭐ Top Projected Players")
+        st.markdown(f"ผู้เล่นที่คาดว่าจะทำคะแนนได้สูงสุดใน GW {target_event}")
+        
+        show_cols = ["web_name", "team_short", "element_type", "now_cost", "form", "fixture_ease", "pred_points"]
+        top_tbl = feat[show_cols].copy()
+        top_tbl.rename(columns={"element_type": "pos", "now_cost": "price"}, inplace=True)
+        top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
+        top_tbl["price"] = (top_tbl["price"] / 10.0).round(1)
+        top_tbl["pred_points"] = top_tbl["pred_points"].round(2)
+        st.dataframe(top_tbl.sort_values("pred_points", ascending=False).head(25), use_container_width=True)
 
     if submitted:
         if entry_id_str:
