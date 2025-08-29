@@ -36,6 +36,15 @@ from sklearn.metrics import mean_absolute_error
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
 
 ###############################
+# Fav icon
+###############################
+st.set_page_config(
+    page_title="FPL Weekly Assistant",
+    page_icon="⚽️",  # สามารถใช้ emoji หรือ URL รูปภาพได้
+    layout="wide"
+)
+
+###############################
 # Slide Settings
 ###############################
 st.markdown(
