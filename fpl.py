@@ -470,6 +470,8 @@ def main():
                             st.write("No clear positive-EV transfer found based on the selected strategy.")
                         else:
                             mv_df = pd.DataFrame(moves)
+
+                            mv_df.index = np.arange(1, len(mv_df) + 1)
                             
                             total_in_cost = mv_df['in_cost'].sum()
                             total_out_cost = mv_df['out_cost'].sum()
