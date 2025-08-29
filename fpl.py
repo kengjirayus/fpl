@@ -453,6 +453,10 @@ def main():
                     else:
                         xi_df = squad_df.loc[xi_ids].copy()
                         xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
+
+                        position_order = ['GK', 'DEF', 'MID', 'FWD']
+                        xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
+
                         xi_df['pred_points'] = xi_df['pred_points'].round(2)
                         st.markdown("**Starting XI**")
                         st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True)
