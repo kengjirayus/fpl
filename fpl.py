@@ -38,13 +38,19 @@ from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, P
 ###############################
 # Slide Settings
 ###############################
-st.set_page_config(layout="wide")
-
 st.markdown(
     """
     <style>
+    /* CSS สำหรับหน้าจอขนาดใหญ่ (Desktop) */
+    @media (min-width: 769px) {
+        .mobile-only {
+            display: none !important;
+        }
+    }
+    
+    /* CSS สำหรับหน้าจอขนาดเล็ก (Mobile) */
     @media (max-width: 768px) {
-        /* ซ่อนเมนูแฮมเบอร์เกอร์เริ่มต้นของ Streamlit บนมือถือ */
+        /* ซ่อนปุ่ม << >> ของ Streamlit บนมือถือ */
         .st-emotion-cache-1l02wac {
             display: none !important;
         }
@@ -61,7 +67,7 @@ st.markdown(
 
 st.markdown(
     """
-    <div style="text-align: center; margin-bottom: 20px;">
+    <div class="mobile-only" style="text-align: center; margin-bottom: 20px;">
         <h2 style="color: #4CAF50; font-size: 24px;">⚙️ การตั้งค่าอยู่ที่แถบด้านข้าง</h2>
         <p style="color: #607D8B; font-size: 18px;">(คลิก >> มุมซ้ายบนเพื่อเปิด)</p>
     </div>
