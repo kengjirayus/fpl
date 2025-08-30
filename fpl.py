@@ -486,7 +486,7 @@ def main():
                         xi_df['pred_points'] = xi_df['pred_points'].round(2)
                         
                         st.markdown("**Starting XI**")
-                        st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=450)
+                        st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
                         
                         cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
                         vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
