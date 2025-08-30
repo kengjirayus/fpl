@@ -148,55 +148,70 @@ def build_master_tables(bootstrap: Dict, fixtures: List[Dict]) -> Tuple[pd.DataF
     return elements, teams, events, fixtures_df
 
 def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, event_id: int) -> pd.DataFrame:
-    """Computes next-game fixture difficulty per team."""
+    """Computes next-game fixture difficulty per team, accounting for DGWs and BGWs."""
     next_gw_fixtures = fixtures_df[fixtures_df["event"] == event_id].copy()
-    if next_gw_fixtures.empty:
-        return pd.DataFrame()
 
     rows = []
+    # Use a dictionary to handle multiple fixtures for a single team (DGW)
+    team_data = {team_id: {'home_fixtures': [], 'away_fixtures': []} for team_id in teams_df['id'].unique()}
+
     for _, row in next_gw_fixtures.iterrows():
         home_team_id, away_team_id = row['team_h'], row['team_a']
-        home_team = teams_df.set_index('id').loc[home_team_id]
-        away_team = teams_df.set_index('id').loc[away_team_id]
+        team_data[home_team_id]['home_fixtures'].append(away_team_id)
+        team_data[away_team_id]['away_fixtures'].append(home_team_id)
+
+    for team_id, fixtures_info in team_data.items():
+        home_opps = fixtures_info['home_fixtures']
+        away_opps = fixtures_info['away_fixtures']
+        
+        num_fixtures = len(home_opps) + len(away_opps)
+        
+        # Blank Gameweek (BGW)
+        if num_fixtures == 0:
+            rows.append({
+                'team': team_id, 
+                'num_fixtures': 0, 
+                'total_opp_def_str': 0, 
+                'avg_fixture_ease': 0
+            })
+            continue
+
+        # Double Gameweek (DGW) or single GW
+        total_opp_def_str = 0
+        total_opp_att_str = 0
+        for opp_id in home_opps:
+            opp_team = teams_df.set_index('id').loc[opp_id]
+            total_opp_def_str += opp_team['strength_defence_away']
+            total_opp_att_str += opp_team['strength_attack_away']
+        for opp_id in away_opps:
+            opp_team = teams_df.set_index('id').loc[opp_id]
+            total_opp_def_str += opp_team['strength_defence_home']
+            total_opp_att_str += opp_team['strength_attack_home']
 
         rows.append({
-            'team': home_team_id, 'opp': away_team_id, 'is_home': 1,
-            'opp_att_str': away_team['strength_attack_away'],
-            'opp_def_str': away_team['strength_defence_away']
+            'team': team_id,
+            'num_fixtures': num_fixtures,
+            'total_opp_def_str': total_opp_def_str,
+            'avg_fixture_ease': 1.0 - (total_opp_def_str / (num_fixtures * teams_df['strength_defence_home'].max()))
         })
-        rows.append({
-            'team': away_team_id, 'opp': home_team_id, 'is_home': 0,
-            'opp_att_str': home_team['strength_attack_home'],
-            'opp_def_str': home_team['strength_defence_home']
-        })
+
     df = pd.DataFrame(rows)
-    # Normalize difficulty
-    max_def = df['opp_def_str'].max()
-    df['fixture_diff'] = df['opp_def_str'] / max_def if max_def > 0 else 0.5
     return df
 
 def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame) -> pd.DataFrame:
     """Joins player table with next fixture info and creates predictive features."""
-    # **FIX**: Sanitize element_type to prevent errors from bad API data
     elements["element_type"] = pd.to_numeric(elements["element_type"], errors='coerce').fillna(0).astype(int)
 
-    if nf.empty:
-        elements['fixture_ease'] = 0.5
-    else:
-        elements = elements.merge(nf, on="team", how="left")
-        max_opp_def = elements["opp_def_str"].max() if "opp_def_str" in elements.columns and not elements["opp_def_str"].isnull().all() else 1
-        elements["opp_def_norm"] = elements["opp_def_str"] / max_opp_def if max_opp_def > 0 else 0.5
-        elements["fixture_ease"] = 1.0 - elements["opp_def_norm"].fillna(0.5)
+    # Merge fixture data
+    elements = elements.merge(nf, on="team", how="left")
+    elements['num_fixtures'] = elements['num_fixtures'].fillna(0).astype(int)
+    elements['avg_fixture_ease'] = elements['avg_fixture_ease'].fillna(0)
 
-    # Basic player signals
     for col in ["form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts"]:
         elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
-
-    # Play probability
+    
     elements["chance_of_playing_next_round"] = pd.to_numeric(elements["chance_of_playing_next_round"], errors="coerce").fillna(100)
     elements["play_prob"] = elements["chance_of_playing_next_round"] / 100.0
-
-    # Simple xGI proxy from ICT and PPG
     elements["xgi_proxy"] = 0.6 * elements["points_per_game"] + 0.4 * (elements["ict_index"] / 10.0)
 
     # Heuristic prediction model
@@ -207,10 +222,13 @@ def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFr
     )
     elements["pred_points_heur"] = (
         (0.45 * elements["xgi_proxy"] + 0.35 * elements["form"] + 0.2 * elements["points_per_game"]) *
-        (0.6 + 0.4 * elements["fixture_ease"]) *
-        (0.5 + 0.5 * elements["play_prob"]) * pos_mult
+        (0.6 + 0.4 * elements["avg_fixture_ease"]) *
+        (0.5 + 0.5 * elements["play_prob"]) * pos_mult * elements['num_fixtures']
     )
-    elements["pred_points_heur"] = elements["pred_points_heur"].clip(lower=0, upper=15)
+    elements["pred_points_heur"] = elements["pred_points_heur"].clip(lower=0, upper=30)
+    
+    # Ensure BGW players have 0 points
+    elements.loc[elements['num_fixtures'] == 0, 'pred_points_heur'] = 0
 
     return elements
 
@@ -457,9 +475,12 @@ def main():
         st.header("⭐ Top Projected Players")
         st.markdown(f"ผู้เล่นที่คาดว่าจะทำคะแนนได้สูงสุดใน GW {target_event}")
         
-        show_cols = ["web_name", "team_short", "element_type", "now_cost", "form", "fixture_ease", "pred_points"]
+        # แก้ไขชื่อคอลัมน์ 'fixture_ease' เป็น 'avg_fixture_ease'
+        show_cols = ["web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]
         top_tbl = feat[show_cols].copy()
-        top_tbl.rename(columns={"element_type": "pos", "now_cost": "price"}, inplace=True)
+        
+        # เพิ่มการเปลี่ยนชื่อคอลัมน์ avg_fixture_ease ให้เป็น fixture_ease เพื่อการแสดงผลที่สวยงาม
+        top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
         top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
         top_tbl["price"] = (top_tbl["price"] / 10.0).round(1)
         top_tbl["pred_points"] = top_tbl["pred_points"].round(2)
@@ -505,6 +526,29 @@ def main():
                         vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
                         st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
                         
+                        # --- ตรวจสอบและแสดงผล DGW/BGW note ---
+                        xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
+                        xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
+
+                        dgw_note = ""
+                        bgw_note = ""
+
+                        if len(xi_dgw_teams) > 0:
+                            dgw_note = f"สัปดาห์นี้มี Double Gameweek ของทีม ({', '.join(xi_dgw_teams)})"
+                        if len(xi_bgw_teams) > 0:
+                            bgw_note = f"สัปดาห์นี้มี Blank Gameweek ของทีม ({', '.join(xi_bgw_teams)})"
+
+                        if dgw_note or bgw_note:
+                            full_note = ""
+                            if dgw_note and bgw_note:
+                                full_note = f"{dgw_note}. {bgw_note}."
+                            elif dgw_note:
+                                full_note = f"{dgw_note}."
+                            elif bgw_note:
+                                full_note = f"{bgw_note}."
+                            st.info(f"💡 {full_note}")
+                        # ----------------------------------------
+
                         # จัดเรียงตัวสำรองตามที่กำหนด: GK1 + ที่เหลือตามคะแนนสูงสุด
                         bench_gk = bench_df[bench_df['element_type'] == 1]
                         bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
