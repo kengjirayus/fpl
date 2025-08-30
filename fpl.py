@@ -422,6 +422,19 @@ def main():
         # Create a reset button outside of the form with an on_click callback
         st.button("Reset", on_click=reset_team_id, help="ล้างค่า ID และรีเฟรชหน้าจอ")
 
+        st.markdown(
+            """
+            <hr style="border-top: 1px solid #bbb;">
+            <a href="https://www.kengji.co/2025/08/30/fpl-wiz/" target="_blank">
+                <button style="width: 100%; font-size: 16px; padding: 10px; border-radius: 8px;">
+                    คู่มือการใช้งาน 📖
+                </button>
+            </a>
+            <hr style="border-top: 1px solid #bbb;">
+            """,
+            unsafe_allow_html=True
+        )
+
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
     elements, teams, events, fixtures_df = build_master_tables(bootstrap, fixtures)
