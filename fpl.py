@@ -473,17 +473,41 @@ def main():
                     if wildcard_ids:
                         wc_squad_df = feat.loc[wildcard_ids].copy()
                         wc_squad_df['pos'] = wc_squad_df['element_type'].map(POSITIONS)
-                        display_df = (wc_squad_df[['web_name', 'team_short', 'pos', 'now_cost', 'pred_points']]
-                                     .rename(columns={'now_cost': 'price'})
-                                     .assign(price=lambda df: (df['price']/10.0).round(1))
-                                     .sort_values('pos'))
-                        st.dataframe(display_df, use_container_width=True)
                         
+                        # แยก 11 ตัวจริงและ 4 ตัวสำรอง
+                        xi_ids, bench_ids = optimize_starting_xi(wc_squad_df)
+                        
+                        xi_df = wc_squad_df.loc[xi_ids].copy()
+                        bench_df = wc_squad_df.loc[bench_ids].copy()
+
+                        # จัดเรียง 11 ตัวจริงตามตำแหน่ง
+                        position_order = ['GK', 'DEF', 'MID', 'FWD']
+                        xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
+                        xi_df['pred_points'] = xi_df['pred_points'].round(2)
+                        
+                        st.markdown("**Starting XI**")
+                        st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=450)
+                        
+                        cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
+                        vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
+                        st.success(f"Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
+                        
+                        # จัดเรียงตัวสำรองตามที่กำหนด: GK1 + ที่เหลือตามคะแนนสูงสุด
+                        bench_gk = bench_df[bench_df['element_type'] == 1]
+                        bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                        ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                        ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+                        ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
+                        
+                        st.markdown("**Bench (in order)**")
+                        st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
+
                         total_points = wc_squad_df['pred_points'].sum()
                         total_cost = wc_squad_df['now_cost'].sum() / 10.0
                         st.success(f"Total Expected Points: **{total_points:.1f}** | Team Value: **£{total_cost:.1f}m**")
                     else:
                         st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
+
                 else:
                     bank = (picks.get("entry_history", {}).get("bank", 0)) / 10.0
                     st.info(f"Bank: **£{bank:.1f}m** | Free Transfers: **{free_transfers}**")
