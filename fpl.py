@@ -498,12 +498,12 @@ def main():
                         xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
                         xi_df['pred_points'] = xi_df['pred_points'].round(2)
                         
-                        st.markdown("**Starting XI**")
+                        st.markdown("**แนะนำนักเตะ 11 ตัวจริง**")
                         st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
                         
                         cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
                         vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                        st.success(f"Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
+                        st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
                         
                         # จัดเรียงตัวสำรองตามที่กำหนด: GK1 + ที่เหลือตามคะแนนสูงสุด
                         bench_gk = bench_df[bench_df['element_type'] == 1]
@@ -512,7 +512,7 @@ def main():
                         ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                         ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
                         
-                        st.markdown("**Bench (in order)**")
+                        st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
                         st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
 
                         total_points = wc_squad_df['pred_points'].sum()
@@ -543,12 +543,12 @@ def main():
                         xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
 
                         xi_df['pred_points'] = xi_df['pred_points'].round(2)
-                        st.markdown("**Starting XI**")
+                        st.markdown("**แนะนำนักเตะ 11 ตัวจริง**")
                         st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
 
                         cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
                         vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                        st.success(f"Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
+                        st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
 
                         bench_df = squad_df.loc[bench_ids].copy()
                         bench_gk = bench_df[bench_df['element_type'] == 1]
@@ -556,7 +556,7 @@ def main():
                         ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                         ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                         ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
-                        st.markdown("**Bench (in order)**")
+                        st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
                         st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
 
                         st.subheader("🔄 Suggested Transfers")
@@ -575,7 +575,7 @@ def main():
                             total_in_cost = mv_df['in_cost'].sum()
                             total_out_cost = mv_df['out_cost'].sum()
 
-                            st.success(f"💸 **Total In-Cost:** £{total_in_cost:.1f}m | **Total Out-Cost:** £{total_out_cost:.1f}m")
+                            st.success(f"💸 **ราคารวมซื้อเข้า:** £{total_in_cost:.1f}m | **ราคารวมขายออก:** £{total_out_cost:.1f}m")
                             
                             st.dataframe(mv_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], use_container_width=True)
 
