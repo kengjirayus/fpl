@@ -504,9 +504,9 @@ def main():
         local_time = utc_time.astimezone(local_tz)
         
         # จัดรูปแบบการแสดงผลที่อ่านง่าย
-        deadline_text = f" | ⏳ **Deadline:** {local_time.strftime('%a, %d %b %H:%M %Z')}"
+        deadline_text = f" | ⏳ Deadline: **{local_time.strftime('%a, %d %b %H:%M %Z')}**"
 
-    st.info(f"Current GW: **{cur_event}** | Target GW for analysis: **{target_event}**{deadline_text}")
+    st.info(f"📅 Current GW: **{cur_event}** | Target GW for analysis: **{target_event}**{deadline_text}")
 
     # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
@@ -566,104 +566,85 @@ def main():
                         wildcard_ids = optimize_wildcard_team(feat, total_value)
                     
                     if wildcard_ids:
-                        wc_squad_df = feat.loc[wildcard_ids].copy()
-                        wc_squad_df['pos'] = wc_squad_df['element_type'].map(POSITIONS)
-                        
-                        # แยก 11 ตัวจริงและ 4 ตัวสำรอง
-                        xi_ids, bench_ids = optimize_starting_xi(wc_squad_df)
-                        
-                        xi_df = wc_squad_df.loc[xi_ids].copy()
-                        bench_df = wc_squad_df.loc[bench_ids].copy()
-
-                        # จัดเรียง 11 ตัวจริงตามตำแหน่ง
-                        position_order = ['GK', 'DEF', 'MID', 'FWD']
-                        xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
-                        xi_df['pred_points'] = xi_df['pred_points'].round(2)
-                        
-                        st.markdown("**แนะนำนักเตะ 11 ตัวจริง**")
-                        st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
-                        
-                        cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
-                        vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                        st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
-                        
-                        # --- ตรวจสอบและแสดงผล DGW/BGW note ---
-                        xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
-                        xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
-
-                        dgw_note = ""
-                        bgw_note = ""
-
-                        if len(xi_dgw_teams) > 0:
-                            dgw_note = f"สัปดาห์นี้มี Double Gameweek ของทีม ({', '.join(xi_dgw_teams)})"
-                        if len(xi_bgw_teams) > 0:
-                            bgw_note = f"สัปดาห์นี้มี Blank Gameweek ของทีม ({', '.join(xi_bgw_teams)})"
-
-                        if dgw_note or bgw_note:
-                            full_note = ""
-                            if dgw_note and bgw_note:
-                                full_note = f"{dgw_note}. {bgw_note}."
-                            elif dgw_note:
-                                full_note = f"{dgw_note}."
-                            elif bgw_note:
-                                full_note = f"{bgw_note}."
-                            st.info(f"💡 {full_note}")
-                        # ----------------------------------------
-
-                        # จัดเรียงตัวสำรองตามที่กำหนด: GK1 + ที่เหลือตามคะแนนสูงสุด
-                        bench_gk = bench_df[bench_df['element_type'] == 1]
-                        bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
-                        ordered_bench_df = pd.concat([bench_gk, bench_outfield])
-                        ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
-                        ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
-                        
-                        st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
-                        st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
-
-                        total_points = wc_squad_df['pred_points'].sum()
-                        total_cost = wc_squad_df['now_cost'].sum() / 10.0
-                        st.success(f"Total Expected Points: **{total_points:.1f}** | Team Value: **£{total_cost:.1f}m**")
+                        squad_df = feat.loc[wildcard_ids].copy() # แก้ไขชื่อตัวแปรเป็น squad_df
+                        xi_ids, bench_ids = optimize_starting_xi(squad_df)
                     else:
                         st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
-
-                else:
-                    bank = (picks.get("entry_history", {}).get("bank", 0)) / 10.0
-                    st.info(f"Bank: **£{bank:.1f}m** | Free Transfers: **{free_transfers}**")
+                        st.stop()
+                
+                else: # Free Transfer / Allow Hit
+                    bank = (entry.get('last_deadline_bank', 0)) / 10.0
+                    
+                    # Fetch the number of transfers from the entry history
+                    entry_history = entry.get('entry_history', {})
+                    free_transfers_from_api = entry_history.get('event_transfers', 0)
+                    
+                    st.info(f"🏦 Bank: **£{bank:.1f}m** | Free Transfers: **{free_transfers_from_api}**")
 
                     pick_ids = [p["element"] for p in picks.get("picks", [])]
-                    squad_df = feat.loc[pick_ids]
-
-                    st.subheader("✅ Recommended Starting XI & Bench Order")
+                    squad_df = feat.loc[pick_ids] # กำหนดตัวแปร squad_df
                     xi_ids, bench_ids = optimize_starting_xi(squad_df)
+
+                # โค้ดส่วนนี้ถูกย้ายออกมาด้านนอกเพื่อให้ทำงานได้เสมอ
+                if not xi_ids or len(xi_ids) != 11:
+                    st.error("Could not form a valid starting XI from your current squad. This can happen with unusual team structures (e.g., during pre-season).")
+                    st.write("Current Squad Composition:")
+                    st.dataframe(squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'}).assign(pos=lambda df: df['pos'].map(POSITIONS)))
+                else:
+                    xi_df = squad_df.loc[xi_ids].copy()
+                    xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
+
+                    position_order = ['GK', 'DEF', 'MID', 'FWD']
+                    xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
+
+                    xi_df['pred_points'] = xi_df['pred_points'].round(2)
+                    st.markdown("✅ **แนะนำนักเตะ 11 ตัวจริง**")
+                    st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
+
+                    cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
+                    vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
+                    st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
                     
-                    if not xi_ids or len(xi_ids) != 11:
-                        st.error("Could not form a valid starting XI from your current squad. This can happen with unusual team structures (e.g., during pre-season).")
-                        st.write("Current Squad Composition:")
-                        st.dataframe(squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'}).assign(pos=lambda df: df['pos'].map(POSITIONS)))
+                    # --- โค้ดตรวจสอบ DGW/BGW note ---
+                    xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
+                    xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
+
+                    dgw_note = ""
+                    bgw_note = ""
+
+                    if len(xi_dgw_teams) > 0:
+                        dgw_note = f"สัปดาห์นี้มี Double Gameweek ของทีม ({', '.join(xi_dgw_teams)})"
+                    if len(xi_bgw_teams) > 0:
+                        bgw_note = f"สัปดาห์นี้มี Blank Gameweek ของทีม ({', '.join(xi_bgw_teams)})"
+
+                    if dgw_note or bgw_note:
+                        full_note = ""
+                        if dgw_note and bgw_note:
+                            full_note = f"{dgw_note}. {bgw_note}."
+                        elif dgw_note:
+                            full_note = f"{dgw_note}."
+                        elif bgw_note:
+                            full_note = f"{bgw_note}."
+                        st.info(f"💡 {full_note}")
+                    # ----------------------------------------
+                    
+                    bench_df = squad_df.loc[bench_ids].copy()
+                    bench_gk = bench_df[bench_df['element_type'] == 1]
+                    bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                    ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                    ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+                    ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
+                    st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
+                    st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
+                    
+                    # ส่วนนี้จะแสดงผลเฉพาะกรณี Wildcard/Free Hit
+                    if transfer_strategy == "Wildcard / Free Hit":
+                        total_points = squad_df['pred_points'].sum()
+                        total_cost = squad_df['now_cost'].sum() / 10.0
+                        st.success(f"Total Expected Points: **{total_points:.1f}** | Team Value: **£{total_cost:.1f}m**")
+                    
+                    # ส่วนนี้จะแสดงผลเฉพาะกรณี Free Transfer / Allow Hit
                     else:
-                        xi_df = squad_df.loc[xi_ids].copy()
-                        xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
-
-                        position_order = ['GK', 'DEF', 'MID', 'FWD']
-                        xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
-
-                        xi_df['pred_points'] = xi_df['pred_points'].round(2)
-                        st.markdown("**แนะนำนักเตะ 11 ตัวจริง**")
-                        st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
-
-                        cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
-                        vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                        st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
-
-                        bench_df = squad_df.loc[bench_ids].copy()
-                        bench_gk = bench_df[bench_df['element_type'] == 1]
-                        bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
-                        ordered_bench_df = pd.concat([bench_gk, bench_outfield])
-                        ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
-                        ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
-                        st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
-                        st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
-
                         st.subheader("🔄 Suggested Transfers")
                         st.markdown(f"💡 คำแนะนำในการซื้อขายนักเตะจากทีมคุณ")
                         with st.spinner("Analyzing potential transfers..."):
@@ -674,9 +655,7 @@ def main():
                             st.write("No clear positive-EV transfer found based on the selected strategy.")
                         else:
                             mv_df = pd.DataFrame(moves)
-
                             mv_df.index = np.arange(1, len(mv_df) + 1)
-                            
                             total_in_cost = mv_df['in_cost'].sum()
                             total_out_cost = mv_df['out_cost'].sum()
 
@@ -714,7 +693,7 @@ def main():
             st.markdown(
                 f'<div class="custom-image"><img src="https://mlkrw8gmc4ni.i.optimole.com/w:1920/h:1034/q:mauto/ig:avif/https://www.kengji.co/wp-content/uploads/2025/08/FPL-01-scaled.webp"></div>',
                 unsafe_allow_html=True
-            )                    
+            )
 
 if __name__ == "__main__":
     main()
