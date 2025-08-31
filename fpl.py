@@ -676,7 +676,28 @@ def main():
                 st.exception(e)
         else:
             st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
-            st.info("💡 FPL Team ID ของคุณอยู่ในแถบ **Settings** ด้านซ้ายมือ")                    
+            st.info("💡 FPL Team ID จากเว็บไซต์ https://fantasy.premierleague.com/ คลิกที่ Points แล้วจะเห็น Team ID ตามตัวอย่างรูปด้านล่าง")
+
+            # เพิ่มโค้ด CSS เพื่อปรับขนาดรูปภาพให้ fit กับหน้าจอ
+            st.markdown(
+                """
+                <style>
+                .custom-image img {
+                    width: 100%;
+                    height: auto;
+                    display: block;
+                    margin: 0 auto;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # แสดงรูปภาพพร้อมกับ class ที่สร้างไว้
+            st.markdown(
+                f'<div class="custom-image"><img src="https://mlkrw8gmc4ni.i.optimole.com/w:1920/h:1034/q:mauto/ig:avif/https://www.kengji.co/wp-content/uploads/2025/08/FPL-01-scaled.webp"></div>',
+                unsafe_allow_html=True
+            )                    
 
 if __name__ == "__main__":
     main()
