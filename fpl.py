@@ -549,6 +549,9 @@ def main():
 
     if submitted:
         if entry_id_str:
+            if not entry_id_str.isdigit():
+                st.error("❗ กรุณากรอก FPL Team ID เป็นตัวเลขเท่านั้น")
+                st.stop()
             try:
                 entry_id = int(entry_id_str)
                 entry = get_entry(entry_id)
