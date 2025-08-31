@@ -508,11 +508,28 @@ def main():
 
     st.info(f"Current GW: **{cur_event}** | Target GW for analysis: **{target_event}**{deadline_text}")
 
+    # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
+    dgw_teams = nf[nf['num_fixtures'] == 2]['team'].map(teams.set_index('id')['short_name'])
+    bgw_teams = nf[nf['num_fixtures'] == 0]['team'].map(teams.set_index('id')['short_name'])
+
+    dgw_note = ""
+    bgw_note = ""
+    if not dgw_teams.empty:
+        dgw_note = f"สัปดาห์นี้มี Double Gameweek: **{', '.join(dgw_teams)}**"
+    if not bgw_teams.empty:
+        bgw_note = f"สัปดาห์นี้มี Blank Gameweek: **{', '.join(bgw_teams)}**"
+    
+    if dgw_note and bgw_note:
+        st.info(f"💡 {dgw_note}. {bgw_note}")
+    elif dgw_note:
+        st.info(f"💡 {dgw_note}")
+    elif bgw_note:
+        st.info(f"💡 {bgw_note}")
+    # ----------------------------------------------------
     feat = engineer_features(elements, teams, nf)
     feat.set_index('id', inplace=True)
     feat["pred_points"] = feat["pred_points_heur"]
-
 
 
     if not submitted:
