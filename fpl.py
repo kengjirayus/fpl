@@ -400,11 +400,11 @@ def optimize_wildcard_team(all_players: pd.DataFrame, budget: float) -> Optional
 
 def main():
     st.set_page_config(page_title="FPL WIZ จัดตัวนักเตะ", layout="wide")
-    st.title("🏟️ FPL WIZ จัดตัวนักเตะด้วย AI | FPL WIZ AI-Powered")
-    st.markdown("เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ FPL ในแต่ละสัปดาห์")
+    st.title("🏟️ FPL WIZ จัดตัวนักเตะด้วย AI | FPL WIZ AI-Powered 🤖")
+    st.markdown("เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ FPL ในแต่ละสัปดาห์ 🧠")
 
     with st.sidebar:
-        st.header("Settings")
+        st.header("⚙️ Settings | ตั้งค่า")
 
         # Callback function to clear the text input
         def reset_team_id():
