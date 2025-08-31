@@ -88,33 +88,41 @@ st.markdown(
 ###############################
 FPL_BASE = "https://fantasy.premierleague.com/api"
 
+def _fetch(url: str) -> Optional[Dict]:
+    """Helper function to fetch JSON data with robust error handling."""
+    try:
+        response = requests.get(url, timeout=10)
+        # ตรวจสอบสถานะการตอบกลับ เช่น 404 Not Found, 500 Internal Server Error
+        response.raise_for_status() 
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        # ดักจับข้อผิดพลาดทั้งหมดที่เกี่ยวข้องกับการเชื่อมต่อ
+        st.error(f"Error fetching data from FPL API: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        # ดักจับข้อผิดพลาดเมื่อข้อมูลที่ได้รับไม่ใช่ JSON ที่ถูกต้อง
+        st.error(f"Error decoding JSON data from FPL API: {e}")
+        return None
+
 @st.cache_data(ttl=300)
 def get_bootstrap() -> Dict:
     """Fetches the main bootstrap data from FPL API."""
-    r = requests.get(f"{FPL_BASE}/bootstrap-static/")
-    r.raise_for_status()
-    return r.json()
+    return _fetch(f"{FPL_BASE}/bootstrap-static/") or {}
 
 @st.cache_data(ttl=300)
 def get_fixtures() -> List[Dict]:
     """Fetches the fixtures data from FPL API."""
-    r = requests.get(f"{FPL_BASE}/fixtures/")
-    r.raise_for_status()
-    return r.json()
+    return _fetch(f"{FPL_BASE}/fixtures/") or []
 
 @st.cache_data(ttl=300)
 def get_entry(entry_id: int) -> Dict:
     """Fetches a user's entry (team) data."""
-    r = requests.get(f"{FPL_BASE}/entry/{entry_id}/")
-    r.raise_for_status()
-    return r.json()
+    return _fetch(f"{FPL_BASE}/entry/{entry_id}/") or {}
 
 @st.cache_data(ttl=300)
 def get_entry_picks(entry_id: int, event: int) -> Dict:
     """Fetches a user's picks for a specific gameweek."""
-    r = requests.get(f"{FPL_BASE}/entry/{entry_id}/event/{event}/picks/")
-    r.raise_for_status()
-    return r.json()
+    return _fetch(f"{FPL_BASE}/entry/{entry_id}/event/{event}/picks/") or {}
 
 ###############################
 # Data & features
