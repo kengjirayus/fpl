@@ -652,7 +652,7 @@ def main():
                                                       all_players=feat, strategy=transfer_strategy)
                         
                         if not moves:
-                            st.write("No clear positive-EV transfer found based on the selected strategy.")
+                            st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองใส่จำนวน Free Transfer หรือเปลี่ยนกลยุทธ์ดูนะครับ")
                         else:
                             mv_df = pd.DataFrame(moves)
                             mv_df.index = np.arange(1, len(mv_df) + 1)
