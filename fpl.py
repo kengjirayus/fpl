@@ -422,23 +422,46 @@ def main():
                 "Transfer Strategy (เลือกรูปแบบการเปลี่ยนตัว)",
                 ("Free Transfer", "Allow Hit (AI Suggest)", "Wildcard / Free Hit")
             )
-            
+
             free_transfers = 1
             if transfer_strategy == "Free Transfer":
                 free_transfers = st.number_input(
-                    "Number of Free Transfers Available (จำนวน FT ที่มี)",
+                    "เลือกจำนวนย้ายตัวฟรีที่คุณมี (สูงสุด 5 ตัว)",
                     min_value=0,
                     max_value=5,
                     value=1,
                     help="Select how many free transfers you have available (0-5)"
                 )
+        
             elif transfer_strategy == "Allow Hit (AI Suggest)":
                 free_transfers = 1
+        
+        # ปุ่ม Analyze Team
             
-            submitted = st.form_submit_button("Analyze Team")
+            submitted = st.form_submit_button(
+            label="Analyze Team",
+            help="คลิกเพื่อวิเคราะห์ทีมของคุณ",
+            use_container_width=False
+        )
+            
+            st.markdown(
+            """
+            <style>
+            div[data-testid="stFormSubmitButton"] button {
+                background-color: #4CAF50;
+                color: white;
+            }
+            div[data-testid="stFormSubmitButton"] button:hover {
+                background-color: #FF9800; /* สีส้มเมื่อ hover */
+                color: white;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
         
         # Create a reset button outside of the form with an on_click callback
-        st.button("Reset", on_click=reset_team_id, help="ล้างค่า ID และรีเฟรชหน้าจอ")
+        st.button("Reset", on_click=reset_team_id, help="ล้างค่า ID และรีเฟรชหน้าจอ", type="primary")
 
         st.markdown(
             """
@@ -452,7 +475,7 @@ def main():
             """,
             unsafe_allow_html=True
         )
-
+    
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
     elements, teams, events, fixtures_df = build_master_tables(bootstrap, fixtures)
@@ -464,12 +487,33 @@ def main():
         
     target_event = next_event or (cur_event + 1 if cur_event else 1)
     
-    st.info(f"Current GW: **{cur_event}** | Target GW for analysis: **{target_event}**")
+    # ดึงข้อมูล deadline ของ target_event
+    target_event_info = next(
+        (e for e in bootstrap.get("events", []) if e.get("id") == target_event),
+        None
+    )
+    
+    deadline_text = ""
+    if target_event_info and target_event_info.get("deadline_time"):
+        from datetime import datetime
+        import pytz
+        
+        # แปลงเวลา UTC จาก API ให้เป็นเวลาท้องถิ่น
+        utc_time = datetime.fromisoformat(target_event_info["deadline_time"].replace("Z", "+00:00"))
+        local_tz = pytz.timezone('Asia/Bangkok') # หรือ 'UTC'
+        local_time = utc_time.astimezone(local_tz)
+        
+        # จัดรูปแบบการแสดงผลที่อ่านง่าย
+        deadline_text = f" | ⏳ **Deadline:** {local_time.strftime('%a, %d %b %H:%M %Z')}"
+
+    st.info(f"Current GW: **{cur_event}** | Target GW for analysis: **{target_event}**{deadline_text}")
 
     nf = next_fixture_features(fixtures_df, teams, target_event)
     feat = engineer_features(elements, teams, nf)
     feat.set_index('id', inplace=True)
     feat["pred_points"] = feat["pred_points_heur"]
+
+
 
     if not submitted:
         st.header("⭐ Top Projected Players")
