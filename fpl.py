@@ -506,7 +506,7 @@ def main():
         # จัดรูปแบบการแสดงผลที่อ่านง่าย
         deadline_text = f" | ⏳ Deadline: **{local_time.strftime('%a, %d %b %H:%M %Z')}**"
 
-    st.info(f"📅 Current GW: **{cur_event}** | Target GW for analysis: **{target_event}**{deadline_text}")
+    st.info(f"📅 สัปดาห์ที่: **{cur_event}** | วิเคราะห์เกมสัปดาห์ที่: **{target_event}**{deadline_text}")
 
     # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
@@ -579,7 +579,11 @@ def main():
                     entry_history = entry.get('entry_history', {})
                     free_transfers_from_api = entry_history.get('event_transfers', 0)
                     
-                    st.info(f"🏦 Bank: **£{bank:.1f}m** | Free Transfers: **{free_transfers_from_api}**")
+                    # Get overall points and current gameweek points
+                    overall_points = entry.get('summary_overall_points', 0)
+                    gameweek_points = entry.get('summary_event_points', 0)
+                    
+                    st.info(f"🏦 Bank: **£{bank:.1f}m** | Free Transfer: **{free_transfers_from_api}** | Overall points: **{overall_points}** | Gameweek points: **{gameweek_points}**")
 
                     pick_ids = [p["element"] for p in picks.get("picks", [])]
                     squad_df = feat.loc[pick_ids] # กำหนดตัวแปร squad_df
