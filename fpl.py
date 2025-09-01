@@ -583,18 +583,119 @@ def main():
                         st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
                         st.stop()
                 
-                else: # Free Transfer / Allow Hit
+                else:  # Free Transfer / Allow Hit (Enhanced with AI Suggest)
                     bank = (entry.get('last_deadline_bank', 0)) / 10.0
-                    
-                    # Fetch the number of transfers from the entry history
-                    entry_history = entry.get('entry_history', {})
-                    free_transfers_from_api = entry_history.get('event_transfers', 0)
+
+                    # 1. แก้ไข: ดึงจำนวนย้ายตัวฟรีจาก API ให้ถูกต้อง
+                    # Key ที่ถูกต้องคือ 'free_transfers'
+                    free_transfers_from_api = entry.get('free_transfers', 1)
+
+                    pick_ids = [p["element"] for p in picks.get("picks", [])]
+                    squad_df = feat.loc[pick_ids].copy() # ใช้ .copy() เพื่อป้องกัน SettingWithCopyWarning
                     
                     # Get overall points and current gameweek points
                     overall_points = entry.get('summary_overall_points', 0)
                     gameweek_points = entry.get('summary_event_points', 0)
+
+                    # -------------------------------
+                    # NEW: Constraint Validation Functions (ที่ขาดหายไป)
+                    # -------------------------------
+                    # ฟังก์ชันเหล่านี้ควรจะถูกประกาศไว้ที่ส่วนบนของไฟล์ร่วมกับฟังก์ชันอื่นๆ
+                    # แต่เพื่อความสะดวก ผมจะประกาศไว้ตรงนี้ก่อนใช้งาน
                     
-                    st.info(f"🏦 Bank: **£{bank:.1f}m** | Free Transfer: **{free_transfers_from_api}** | Overall points: **{overall_points}** | Gameweek points: **{gameweek_points}**")
+                    def is_budget_ok(suggestion: dict, current_bank: float) -> bool:
+                        """ตรวจสอบว่างบประมาณเพียงพอสำหรับการย้ายตัวหรือไม่"""
+                        cost_change = (suggestion['in_cost'] - suggestion['out_cost'])
+                        return cost_change <= current_bank
+
+                    def is_within_club_limit(suggestion: dict, current_squad: pd.DataFrame, all_players: pd.DataFrame) -> bool:
+                        """ตรวจสอบว่าการย้ายตัวไม่ทำให้มีผู้เล่นจากสโมสรเดียวกันเกิน 3 คน"""
+                        in_player_team = all_players.loc[suggestion['in_id'], 'team']
+                        out_player_team = all_players.loc[suggestion['out_id'], 'team']
+                        
+                        # ถ้าทีมของผู้เล่นเข้ากับออกเป็นทีมเดียวกัน จำนวนผู้เล่นในทีมจะไม่เปลี่ยนแปลง
+                        if in_player_team == out_player_team:
+                            return True
+                        
+                        # สร้าง squad ชั่วคราวหลังการย้ายตัว
+                        temp_squad_teams = list(current_squad['team'])
+                        temp_squad_teams.remove(out_player_team)
+                        temp_squad_teams.append(in_player_team)
+                        
+                        # นับจำนวนผู้เล่นในทีมของผู้เล่นที่ย้ายเข้ามา
+                        return temp_squad_teams.count(in_player_team) <= 3
+
+                    def is_position_valid(suggestion: dict, current_squad: pd.DataFrame, all_players: pd.DataFrame) -> bool:
+                        """ตรวจสอบว่าการย้ายตัวยังคงโครงสร้างตำแหน่งผู้เล่นที่ถูกต้อง (2 GK, 5 DEF, 5 MID, 3 FWD)"""
+                        in_player_pos = all_players.loc[suggestion['in_id'], 'element_type']
+                        out_player_pos = all_players.loc[suggestion['out_id'], 'element_type']
+
+                        # ถ้าตำแหน่งเหมือนกัน โครงสร้างทีมไม่เปลี่ยน
+                        if in_player_pos == out_player_pos:
+                            return True
+
+                        # สร้าง squad ชั่วคราวหลังการย้ายตัว
+                        temp_squad_pos = list(current_squad['element_type'])
+                        temp_squad_pos.remove(out_player_pos)
+                        temp_squad_pos.append(in_player_pos)
+                        
+                        # ตรวจสอบจำนวนผู้เล่นในแต่ละตำแหน่ง
+                        return (temp_squad_pos.count(1) == 2 and
+                                temp_squad_pos.count(2) == 5 and
+                                temp_squad_pos.count(3) == 5 and
+                                temp_squad_pos.count(4) == 3)
+                    
+                    # -------------------------------
+                    # หมายเหตุ: ส่วน Weighted Horizon Projection
+                    # -------------------------------
+                    # โค้ดส่วนนี้ซับซ้อนและต้องใช้ ML Model ซึ่งยังไม่มีในไฟล์
+                    # จึงขอคอมเมนต์ไว้ก่อน เพื่อไม่ให้เกิด Error
+                    # หากคุณมี Model พร้อมใช้งาน สามารถนำโค้ดส่วนนี้กลับมาและปรับแก้ได้
+                    
+                    # lookahead_weeks = 3
+                    # horizon_weights = [0.6, 0.3, 0.1]
+                    # projected_value = 0.0
+                    # for week_offset in range(lookahead_weeks):
+                    #     future_gw = cur_event + week_offset # แก้ current_gw เป็น cur_event
+                    #     # ต้องมี logic ในการดึง fixture_data ของสัปดาห์ข้างหน้า
+                    #     # และต้องมี ml_model, get_ml_features, historical_data ที่พร้อมใช้งาน
+                    #     # ... (code for prediction) ...
+
+                    # -------------------------------
+                    # NEW: Decision on Allowing Hit (ปรับปรุง)
+                    # -------------------------------
+                    # เราจะเรียกใช้ suggest_transfers เพื่อหาความเป็นไปได้ทั้งหมดก่อน
+                    # แล้วค่อยกรองตามเงื่อนไข
+                    
+                    # สร้างรายการการย้ายตัวที่เป็นไปได้ทั้งหมด
+                    potential_moves = suggest_transfers(pick_ids, bank, free_transfers, feat, transfer_strategy)
+                    
+                    valid_moves = []
+                    temp_bank = bank
+                    
+                    for suggestion in potential_moves:
+                        # ตรวจสอบเงื่อนไขต่างๆ
+                        # หมายเหตุ: suggest_transfers ที่มีอยู่แล้วจะจัดการเรื่อง budget ในระดับหนึ่ง
+                        # แต่เราสามารถเพิ่มการตรวจสอบที่ซับซ้อนขึ้นได้ที่นี่
+                        if (is_within_club_limit(suggestion, squad_df, feat) and
+                            is_position_valid(suggestion, squad_df, feat)):
+                             valid_moves.append(suggestion)
+
+                    # Store the decision into the entry for later usage in UI/UX
+                    # ส่วนนี้เป็นการสมมติว่าต้องการเก็บค่าไว้ในตัวแปร entry
+                    # ซึ่งอาจไม่จำเป็น แต่ทำตามโค้ดต้นฉบับ
+                    entry["ai_valid_moves"] = valid_moves
+                    
+                    # ส่วนการตัดสินใจ Allow Hit สามารถทำได้โดยดูจาก net_gain
+                    # ที่คำนวณมาจาก suggest_transfers อยู่แล้ว
+                    allow_hit = any(move['net_gain'] > 0 and move['hit_cost'] > 0 for move in valid_moves)
+                    entry["ai_allow_hit"] = allow_hit
+                    
+                    # -------------------------------
+                    
+                    xi_ids, bench_ids = optimize_starting_xi(squad_df)
+                    
+                    st.info(f"🏦 Bank: **£{bank:.1f}m** | 🆓 Free Transfer: **{free_transfers_from_api}** | 🎯 Overall points: **{overall_points}** | Gameweek points: **{gameweek_points}**")
 
                     pick_ids = [p["element"] for p in picks.get("picks", [])]
                     squad_df = feat.loc[pick_ids] # กำหนดตัวแปร squad_df
