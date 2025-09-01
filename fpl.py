@@ -276,7 +276,6 @@ def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], Lis
         # Return empty lists if no optimal solution found
         return [], []
 
-
 def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int,
                       all_players: pd.DataFrame,
                       strategy: str) -> List[Dict]:
@@ -289,16 +288,15 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
 
     # Modify transfer limits and hit costs based on strategy
     if strategy == "Free Transfer":
-        max_transfers = free_transfers  # Exactly match user selection
-        hit_cost = float('inf')  # Never take hits
+        max_transfers = free_transfers
+        hit_cost = float('inf')
     elif strategy == "Allow Hit (AI Suggest)":
-        max_transfers = 5  # Allow up to 5 transfers total
-        hit_cost = 4  # -4 points per extra transfer
+        max_transfers = 5
+        hit_cost = 4
     else:  # Wildcard/Free Hit
         max_transfers = 15
         hit_cost = 0
 
-    # Group players by position for better replacement suggestions
     position_groups = {}
     for out_id in current_squad_ids:
         out_player = all_players.loc[out_id]
@@ -311,33 +309,33 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
     used_in_players = set()
     remaining_bank = bank
 
-    # Process each position separately
     for pos in sorted(position_groups.keys()):
         out_ids = position_groups[pos]
         
-        # Get all possible replacements for this position
+        max_budget_for_pos = all_players.loc[out_ids]['selling_price'].max() + (bank * 10)
+        
         all_replacements = all_players[
             (all_players['element_type'] == pos) &
             (~all_players.index.isin(current_squad_ids)) &
-            (all_players['now_cost'] <= max(all_players.loc[out_ids]['now_cost'].max() + (bank * 10), all_players.loc[out_ids]['now_cost'].min()))
+            (all_players['now_cost'] <= max_budget_for_pos)
         ].sort_values('pred_points', ascending=False)
 
-        # Find best unique replacements for each outgoing player
         for out_id in sorted(out_ids, key=lambda x: all_players.loc[x, 'pred_points']):
             out_player = all_players.loc[out_id]
+            
+            budget_for_replacement = out_player['selling_price'] + (remaining_bank * 10)
             
             valid_replacements = all_replacements[
                 (~all_replacements.index.isin(used_in_players)) &
                 (all_replacements['pred_points'] > out_player['pred_points']) &
-                (all_replacements['now_cost'] <= out_player['now_cost'] + (remaining_bank * 10))
+                (all_replacements['now_cost'] <= budget_for_replacement)
             ]
 
             if valid_replacements.empty:
                 continue
 
-            # Take best available replacement
             in_player = valid_replacements.iloc[0]
-            cost_change = (in_player['now_cost'] - out_player['now_cost']) / 10.0
+            cost_change = (in_player['now_cost'] - out_player['selling_price']) / 10.0
 
             if cost_change <= remaining_bank:
                 potential_moves.append({
@@ -349,15 +347,13 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
                     "in_pos": POSITIONS[in_player["element_type"]],
                     "delta_points": in_player['pred_points'] - out_player['pred_points'],
                     "in_cost": in_player['now_cost'] / 10.0,
-                    "out_cost": out_player['now_cost'] / 10.0,
+                    "out_cost": out_player['selling_price'] / 10.0,
                 })
                 used_in_players.add(in_player.name)
                 remaining_bank -= cost_change
 
-    # Sort moves by predicted point improvement
     potential_moves = sorted(potential_moves, key=lambda x: x["delta_points"], reverse=True)
 
-    # Calculate final suggestions with hit costs
     final_suggestions = []
     total_hit_cost = 0
 
@@ -401,6 +397,23 @@ def optimize_wildcard_team(all_players: pd.DataFrame, budget: float) -> Optional
     if LpStatus[prob.status] == 'Optimal':
         return [i for i in ids if x[i].value() == 1]
     return None
+
+def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_transfers: int,
+                              all_players: pd.DataFrame, strategy: str) -> Tuple[List[Dict], List[Dict]]:
+    """แนะนำ transfers แบบ 2 มุมมอง: ปกติ vs ระมัดระวัง"""
+    # การแนะนำแบบปกติ
+    normal_moves = suggest_transfers(current_squad_ids, bank, free_transfers, all_players, strategy)
+    
+    # การแนะนำแบบระมัดระวัง - ลดราคาขาย
+    all_players_conservative = all_players.copy()
+    for player_id in current_squad_ids:
+        current_price = all_players.loc[player_id, 'selling_price']
+        # ลดราคาขาย 1.5 หรือ 25% (เลือกค่าที่มากกว่า)
+        conservative_price = max(current_price - 1.5, current_price * 0.85)
+        all_players_conservative.loc[player_id, 'selling_price'] = conservative_price
+    
+    conservative_moves = suggest_transfers(current_squad_ids, bank, free_transfers, all_players_conservative, strategy)
+    return normal_moves, conservative_moves
 
 ###############################
 # Streamlit UI
@@ -565,7 +578,34 @@ def main():
                 entry = get_entry(entry_id)
                 ev_for_picks = cur_event or 1
                 picks = get_entry_picks(entry_id, ev_for_picks)
-                
+
+                # ========== การจัดการข้อมูล selling_price ที่อาจหายไป ==========
+                picks_data = picks.get("picks", [])
+
+                # สร้าง selling_price_map สำหรับทุกผู้เล่นในทีม
+                selling_price_map = {}
+                for p in picks_data:
+                    player_id = p['element']
+                    
+                    if 'selling_price' in p and p['selling_price'] is not None:
+                        # ถ้ามี selling_price ใน API ใช้เลย
+                        selling_price_map[player_id] = p['selling_price']
+                    elif 'purchase_price' in p and p['purchase_price'] is not None:
+                        # คำนวณ selling_price จาก purchase_price
+                        purchase_price = p['purchase_price']
+                        now_cost = feat.loc[player_id, 'now_cost']
+                        profit = now_cost - purchase_price
+                        selling_price = purchase_price + (profit // 2)  # ปัดเศษลง
+                        selling_price_map[player_id] = selling_price
+                    else:
+                        # fallback สุดท้าย: ใช้ราคาปัจจุบัน
+                        selling_price_map[player_id] = feat.loc[player_id, 'now_cost']
+
+                # อัปเดต selling_price ใน DataFrame
+                feat['selling_price'] = feat.index.map(selling_price_map)
+                feat['selling_price'].fillna(feat['now_cost'], inplace=True)
+                # ========== จบการจัดการข้อมูล selling_price ==========         
+
                 st.header(f"🚀 Analysis for '{entry['name']}'")
 
                 if transfer_strategy == "Wildcard / Free Hit":
@@ -577,7 +617,7 @@ def main():
                         wildcard_ids = optimize_wildcard_team(feat, total_value)
                     
                     if wildcard_ids:
-                        squad_df = feat.loc[wildcard_ids].copy() # แก้ไขชื่อตัวแปรเป็น squad_df
+                        squad_df = feat.loc[wildcard_ids].copy() 
                         xi_ids, bench_ids = optimize_starting_xi(squad_df)
                     else:
                         st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
@@ -585,123 +625,18 @@ def main():
                 
                 else:  # Free Transfer / Allow Hit (Enhanced with AI Suggest)
                     bank = (entry.get('last_deadline_bank', 0)) / 10.0
-
-                    # 1. แก้ไข: ดึงจำนวนย้ายตัวฟรีจาก API ให้ถูกต้อง
-                    # Key ที่ถูกต้องคือ 'free_transfers'
                     free_transfers_from_api = entry.get('free_transfers', 1)
 
                     pick_ids = [p["element"] for p in picks.get("picks", [])]
-                    squad_df = feat.loc[pick_ids].copy() # ใช้ .copy() เพื่อป้องกัน SettingWithCopyWarning
+                    squad_df = feat.loc[pick_ids].copy() 
                     
-                    # Get overall points and current gameweek points
                     overall_points = entry.get('summary_overall_points', 0)
                     gameweek_points = entry.get('summary_event_points', 0)
 
-                    # -------------------------------
-                    # NEW: Constraint Validation Functions (ที่ขาดหายไป)
-                    # -------------------------------
-                    # ฟังก์ชันเหล่านี้ควรจะถูกประกาศไว้ที่ส่วนบนของไฟล์ร่วมกับฟังก์ชันอื่นๆ
-                    # แต่เพื่อความสะดวก ผมจะประกาศไว้ตรงนี้ก่อนใช้งาน
-                    
-                    def is_budget_ok(suggestion: dict, current_bank: float) -> bool:
-                        """ตรวจสอบว่างบประมาณเพียงพอสำหรับการย้ายตัวหรือไม่"""
-                        cost_change = (suggestion['in_cost'] - suggestion['out_cost'])
-                        return cost_change <= current_bank
-
-                    def is_within_club_limit(suggestion: dict, current_squad: pd.DataFrame, all_players: pd.DataFrame) -> bool:
-                        """ตรวจสอบว่าการย้ายตัวไม่ทำให้มีผู้เล่นจากสโมสรเดียวกันเกิน 3 คน"""
-                        in_player_team = all_players.loc[suggestion['in_id'], 'team']
-                        out_player_team = all_players.loc[suggestion['out_id'], 'team']
-                        
-                        # ถ้าทีมของผู้เล่นเข้ากับออกเป็นทีมเดียวกัน จำนวนผู้เล่นในทีมจะไม่เปลี่ยนแปลง
-                        if in_player_team == out_player_team:
-                            return True
-                        
-                        # สร้าง squad ชั่วคราวหลังการย้ายตัว
-                        temp_squad_teams = list(current_squad['team'])
-                        temp_squad_teams.remove(out_player_team)
-                        temp_squad_teams.append(in_player_team)
-                        
-                        # นับจำนวนผู้เล่นในทีมของผู้เล่นที่ย้ายเข้ามา
-                        return temp_squad_teams.count(in_player_team) <= 3
-
-                    def is_position_valid(suggestion: dict, current_squad: pd.DataFrame, all_players: pd.DataFrame) -> bool:
-                        """ตรวจสอบว่าการย้ายตัวยังคงโครงสร้างตำแหน่งผู้เล่นที่ถูกต้อง (2 GK, 5 DEF, 5 MID, 3 FWD)"""
-                        in_player_pos = all_players.loc[suggestion['in_id'], 'element_type']
-                        out_player_pos = all_players.loc[suggestion['out_id'], 'element_type']
-
-                        # ถ้าตำแหน่งเหมือนกัน โครงสร้างทีมไม่เปลี่ยน
-                        if in_player_pos == out_player_pos:
-                            return True
-
-                        # สร้าง squad ชั่วคราวหลังการย้ายตัว
-                        temp_squad_pos = list(current_squad['element_type'])
-                        temp_squad_pos.remove(out_player_pos)
-                        temp_squad_pos.append(in_player_pos)
-                        
-                        # ตรวจสอบจำนวนผู้เล่นในแต่ละตำแหน่ง
-                        return (temp_squad_pos.count(1) == 2 and
-                                temp_squad_pos.count(2) == 5 and
-                                temp_squad_pos.count(3) == 5 and
-                                temp_squad_pos.count(4) == 3)
-                    
-                    # -------------------------------
-                    # หมายเหตุ: ส่วน Weighted Horizon Projection
-                    # -------------------------------
-                    # โค้ดส่วนนี้ซับซ้อนและต้องใช้ ML Model ซึ่งยังไม่มีในไฟล์
-                    # จึงขอคอมเมนต์ไว้ก่อน เพื่อไม่ให้เกิด Error
-                    # หากคุณมี Model พร้อมใช้งาน สามารถนำโค้ดส่วนนี้กลับมาและปรับแก้ได้
-                    
-                    # lookahead_weeks = 3
-                    # horizon_weights = [0.6, 0.3, 0.1]
-                    # projected_value = 0.0
-                    # for week_offset in range(lookahead_weeks):
-                    #     future_gw = cur_event + week_offset # แก้ current_gw เป็น cur_event
-                    #     # ต้องมี logic ในการดึง fixture_data ของสัปดาห์ข้างหน้า
-                    #     # และต้องมี ml_model, get_ml_features, historical_data ที่พร้อมใช้งาน
-                    #     # ... (code for prediction) ...
-
-                    # -------------------------------
-                    # NEW: Decision on Allowing Hit (ปรับปรุง)
-                    # -------------------------------
-                    # เราจะเรียกใช้ suggest_transfers เพื่อหาความเป็นไปได้ทั้งหมดก่อน
-                    # แล้วค่อยกรองตามเงื่อนไข
-                    
-                    # สร้างรายการการย้ายตัวที่เป็นไปได้ทั้งหมด
-                    potential_moves = suggest_transfers(pick_ids, bank, free_transfers, feat, transfer_strategy)
-                    
-                    valid_moves = []
-                    temp_bank = bank
-                    
-                    for suggestion in potential_moves:
-                        # ตรวจสอบเงื่อนไขต่างๆ
-                        # หมายเหตุ: suggest_transfers ที่มีอยู่แล้วจะจัดการเรื่อง budget ในระดับหนึ่ง
-                        # แต่เราสามารถเพิ่มการตรวจสอบที่ซับซ้อนขึ้นได้ที่นี่
-                        if (is_within_club_limit(suggestion, squad_df, feat) and
-                            is_position_valid(suggestion, squad_df, feat)):
-                             valid_moves.append(suggestion)
-
-                    # Store the decision into the entry for later usage in UI/UX
-                    # ส่วนนี้เป็นการสมมติว่าต้องการเก็บค่าไว้ในตัวแปร entry
-                    # ซึ่งอาจไม่จำเป็น แต่ทำตามโค้ดต้นฉบับ
-                    entry["ai_valid_moves"] = valid_moves
-                    
-                    # ส่วนการตัดสินใจ Allow Hit สามารถทำได้โดยดูจาก net_gain
-                    # ที่คำนวณมาจาก suggest_transfers อยู่แล้ว
-                    allow_hit = any(move['net_gain'] > 0 and move['hit_cost'] > 0 for move in valid_moves)
-                    entry["ai_allow_hit"] = allow_hit
-                    
-                    # -------------------------------
-                    
                     xi_ids, bench_ids = optimize_starting_xi(squad_df)
                     
                     st.info(f"🏦 Bank: **£{bank:.1f}m** | 🆓 Free Transfer: **{free_transfers_from_api}** | 🎯 Overall points: **{overall_points}** | Gameweek points: **{gameweek_points}**")
 
-                    pick_ids = [p["element"] for p in picks.get("picks", [])]
-                    squad_df = feat.loc[pick_ids] # กำหนดตัวแปร squad_df
-                    xi_ids, bench_ids = optimize_starting_xi(squad_df)
-
-                # โค้ดส่วนนี้ถูกย้ายออกมาด้านนอกเพื่อให้ทำงานได้เสมอ
                 if not xi_ids or len(xi_ids) != 11:
                     st.error("Could not form a valid starting XI from your current squad. This can happen with unusual team structures (e.g., during pre-season).")
                     st.write("Current Squad Composition:")
@@ -721,7 +656,6 @@ def main():
                     vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
                     st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
                     
-                    # --- โค้ดตรวจสอบ DGW/BGW note ---
                     xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
                     xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
 
@@ -742,7 +676,6 @@ def main():
                         elif bgw_note:
                             full_note = f"{bgw_note}."
                         st.info(f"💡 {full_note}")
-                    # ----------------------------------------
                     
                     bench_df = squad_df.loc[bench_ids].copy()
                     bench_gk = bench_df[bench_df['element_type'] == 1]
@@ -753,31 +686,56 @@ def main():
                     st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
                     st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
                     
-                    # ส่วนนี้จะแสดงผลเฉพาะกรณี Wildcard/Free Hit
                     if transfer_strategy == "Wildcard / Free Hit":
                         total_points = squad_df['pred_points'].sum()
                         total_cost = squad_df['now_cost'].sum() / 10.0
                         st.success(f"Total Expected Points: **{total_points:.1f}** | Team Value: **£{total_cost:.1f}m**")
                     
-                    # ส่วนนี้จะแสดงผลเฉพาะกรณี Free Transfer / Allow Hit
                     else:
                         st.subheader("🔄 Suggested Transfers")
-                        st.markdown(f"💡 คำแนะนำในการซื้อขายนักเตะจากทีมคุณ ‼️ระบบราคาตลาดและราคาขายอยู่ระหว่างการปรับปรุง ตรวจสอบที่ APP FPL อีกครั้ง")
+                        st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ ⚠️เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ 🔎")
                         with st.spinner("Analyzing potential transfers..."):
-                            moves = suggest_transfers(pick_ids, bank=bank, free_transfers=free_transfers,
-                                                      all_players=feat, strategy=transfer_strategy)
-                        
-                        if not moves:
-                            st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองใส่จำนวน Free Transfer หรือเปลี่ยนกลยุทธ์ดูนะครับ")
-                        else:
-                            mv_df = pd.DataFrame(moves)
-                            mv_df.index = np.arange(1, len(mv_df) + 1)
-                            total_in_cost = mv_df['in_cost'].sum()
-                            total_out_cost = mv_df['out_cost'].sum()
+                            normal_moves, conservative_moves = suggest_transfers_enhanced(
+                                pick_ids, bank=bank, free_transfers=free_transfers,
+                                all_players=feat, strategy=transfer_strategy
+                            )
 
-                            st.success(f"💸 **ราคารวมซื้อเข้า:** £{total_in_cost:.1f}m | **ราคารวมขายออก:** £{total_out_cost:.1f}m")
+                        if not normal_moves and not conservative_moves:
+                            st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองเปลี่ยนกลยุทธ์หรือเพิ่ม Free Transfer")
+                        else:
+                            # แสดงผลแบบ 2 คอลัมน์
+                            col1, col2 = st.columns(2)
                             
-                            st.dataframe(mv_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], use_container_width=True)
+                            with col1:
+                                st.markdown("#### 📊 การแนะนำหลัก")
+                                st.caption("ใช้ราคาจากฐานข้อมูล FPL")
+                                if normal_moves:
+                                    normal_df = pd.DataFrame(normal_moves)
+                                    normal_df.index = np.arange(1, len(normal_df) + 1)
+                                    total_in = normal_df['in_cost'].sum()
+                                    total_out = normal_df['out_cost'].sum()
+                                    st.info(f"💸: **ซื้อเข้า £{total_in:.1f}m** | **ขายออก £{total_out:.1f}m**")
+                                    st.dataframe(normal_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], 
+                                                use_container_width=True)
+                                else:
+                                    st.write("ไม่มีการแนะนำ")
+                            
+                            with col2:
+                                st.markdown("#### 🛡️ การแนะนำแบบลดราคาลง")
+                                st.caption("ลดราคาขาย 0.1-0.2 เพื่อป้องกันงบไม่พอ")
+                                if conservative_moves:
+                                    conservative_df = pd.DataFrame(conservative_moves)
+                                    conservative_df.index = np.arange(1, len(conservative_df) + 1)
+                                    total_in_c = conservative_df['in_cost'].sum()
+                                    total_out_c = conservative_df['out_cost'].sum()
+                                    st.info(f"💸: **ซื้อเข้า £{total_in_c:.1f}m** | **ขายออก £{total_out_c:.1f}m**")
+                                    st.dataframe(conservative_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], 
+                                                use_container_width=True)
+                                else:
+                                    st.write("ไม่มีการแนะนำในโหมดระมัดระวัง")
+                            
+                            # เพิ่มคำเตือน
+                            st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
 
             except requests.exceptions.HTTPError as e:
                 st.error(f"Could not fetch data for Team ID {entry_id_str}. Please check if the ID is correct. (Error: {e.response.status_code})")
@@ -790,7 +748,6 @@ def main():
             st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
             st.info("💡 FPL Team ID จากเว็บไซต์ https://fantasy.premierleague.com/ คลิกที่ Points แล้วจะเห็น Team ID ตามตัวอย่างรูปด้านล่าง")
 
-            # เพิ่มโค้ด CSS เพื่อปรับขนาดรูปภาพให้ fit กับหน้าจอ
             st.markdown(
                 """
                 <style>
@@ -805,7 +762,6 @@ def main():
                 unsafe_allow_html=True
             )
             
-            # แสดงรูปภาพพร้อมกับ class ที่สร้างไว้
             st.markdown(
                 f'<div class="custom-image"><img src="https://mlkrw8gmc4ni.i.optimole.com/w:1920/h:1034/q:mauto/ig:avif/https://www.kengji.co/wp-content/uploads/2025/08/FPL-01-scaled.webp"></div>',
                 unsafe_allow_html=True
