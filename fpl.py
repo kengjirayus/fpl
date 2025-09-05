@@ -404,16 +404,47 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
     # การแนะนำแบบปกติ
     normal_moves = suggest_transfers(current_squad_ids, bank, free_transfers, all_players, strategy)
     
-    # การแนะนำแบบระมัดระวัง - ลดราคาขาย
-    all_players_conservative = all_players.copy()
+    # การแนะนำแบบระมัดระวัง
+    conservative_all_players = all_players.copy()
     for player_id in current_squad_ids:
         current_price = all_players.loc[player_id, 'selling_price']
-        # ลดราคาขาย 1.5 หรือ 25% (เลือกค่าที่มากกว่า)
-        conservative_price = max(current_price - 1.5, current_price * 0.85)
-        all_players_conservative.loc[player_id, 'selling_price'] = conservative_price
+        # ลดราคาขายลง 0.2 เพื่อความปลอดภัย
+        conservative_price = max(current_price - 2, current_price * 0.95)  # ลดขั้นต่ำ 0.2 หรือ 5%
+        conservative_all_players.loc[player_id, 'selling_price'] = conservative_price
     
-    conservative_moves = suggest_transfers(current_squad_ids, bank, free_transfers, all_players_conservative, strategy)
-    return normal_moves, conservative_moves
+    # คำนวณงบที่มีอยู่จริงหลังจากลดราคาขาย
+    conservative_bank = bank
+    for move in normal_moves:
+        out_id = move['out_id']
+        original_price = all_players.loc[out_id, 'selling_price']
+        conservative_price = conservative_all_players.loc[out_id, 'selling_price']
+        price_diff = (original_price - conservative_price) / 10.0
+        conservative_bank = max(0, conservative_bank - price_diff)
+    
+    # หา transfers ที่เป็นไปได้โดยใช้ราคาที่ระมัดระวัง
+    conservative_moves = suggest_transfers(
+        current_squad_ids, 
+        conservative_bank,  # ใช้งบที่ปรับแล้ว
+        free_transfers,
+        conservative_all_players,
+        strategy
+    )
+    
+    # กรองเฉพาะ transfers ที่แน่ใจว่าทำได้
+    filtered_conservative_moves = []
+    remaining_bank = conservative_bank
+    used_players = set()
+    
+    for move in conservative_moves:
+        if move['in_id'] not in used_players:
+            cost_change = move['in_cost'] - move['out_cost']
+            if cost_change <= remaining_bank:
+                move['out_cost'] = round(conservative_all_players.loc[move['out_id'], 'selling_price'] / 10.0, 1)
+                filtered_conservative_moves.append(move)
+                remaining_bank -= cost_change
+                used_players.add(move['in_id'])
+    
+    return normal_moves, filtered_conservative_moves
 
 ###############################
 # Streamlit UI
@@ -703,36 +734,34 @@ def main():
                         if not normal_moves and not conservative_moves:
                             st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองเปลี่ยนกลยุทธ์หรือเพิ่ม Free Transfer")
                         else:
-                            # แสดงผลแบบ 2 คอลัมน์
                             col1, col2 = st.columns(2)
                             
                             with col1:
-                                st.markdown("#### 📊 การแนะนำหลัก")
-                                st.caption("ใช้ราคาจากฐานข้อมูล FPL")
+                                st.markdown("#### 📊 ข้อเสนอหลัก (ราคาปัจจุบัน)")
                                 if normal_moves:
                                     normal_df = pd.DataFrame(normal_moves)
                                     normal_df.index = np.arange(1, len(normal_df) + 1)
                                     total_in = normal_df['in_cost'].sum()
                                     total_out = normal_df['out_cost'].sum()
-                                    st.info(f"💸: **ซื้อเข้า £{total_in:.1f}m** | **ขายออก £{total_out:.1f}m**")
-                                    st.dataframe(normal_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], 
-                                                use_container_width=True)
+                                    st.info(f"💰 งบประมาณ: ซื้อเข้า **£{total_in:.1f}m** | ขายออก **£{total_out:.1f}m**")
+                                    st.dataframe(normal_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]], 
+                                               use_container_width=True)
                                 else:
                                     st.write("ไม่มีการแนะนำ")
                             
                             with col2:
-                                st.markdown("#### 🛡️ การแนะนำแบบลดราคาลง")
-                                st.caption("ลดราคาขาย 0.1-0.2 เพื่อป้องกันงบไม่พอ")
+                                st.markdown("#### 🛡️ ข้อเสนอสำรอง (ปรับราคาขายลง)")
                                 if conservative_moves:
                                     conservative_df = pd.DataFrame(conservative_moves)
                                     conservative_df.index = np.arange(1, len(conservative_df) + 1)
                                     total_in_c = conservative_df['in_cost'].sum()
                                     total_out_c = conservative_df['out_cost'].sum()
-                                    st.info(f"💸: **ซื้อเข้า £{total_in_c:.1f}m** | **ขายออก £{total_out_c:.1f}m**")
-                                    st.dataframe(conservative_df[["out_name", "in_name", "delta_points", "net_gain", "in_cost", "out_cost"]], 
-                                                use_container_width=True)
+                                    st.info(f"💰 งบประมาณ: ซื้อเข้า **£{total_in_c:.1f}m** | ขายออก **£{total_out_c:.1f}m**")
+                                    st.dataframe(conservative_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]], 
+                                               use_container_width=True)
+                                    st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
                                 else:
-                                    st.write("ไม่มีการแนะนำในโหมดระมัดระวัง")
+                                    st.write("ไม่มีการแนะนำที่ปลอดภัยพอ")
                             
                             # เพิ่มคำเตือน
                             st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
