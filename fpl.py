@@ -12,13 +12,16 @@ What it does
 
 How to run
 1) pip install streamlit pandas numpy scikit-learn pulp requests
-2) streamlit run fpl_assistant.py
+2) streamlit run fpl.py
 
 Notes
 - This app reads public FPL endpoints. No login required.
 - Transfer suggestions consider the upcoming GW only by default.
 - If you provide a historical CSV (schema documented below), the ML model will be used.
 """
+###############################
+# V1.1
+###############################
 
 import os
 import math
@@ -93,7 +96,7 @@ def _fetch(url: str) -> Optional[Dict]:
     try:
         response = requests.get(url, timeout=10)
         # ตรวจสอบสถานะการตอบกลับ เช่น 404 Not Found, 500 Internal Server Error
-        response.raise_for_status() 
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         # ดักจับข้อผิดพลาดทั้งหมดที่เกี่ยวข้องกับการเชื่อมต่อ
@@ -123,6 +126,234 @@ def get_entry(entry_id: int) -> Dict:
 def get_entry_picks(entry_id: int, event: int) -> Dict:
     """Fetches a user's picks for a specific gameweek."""
     return _fetch(f"{FPL_BASE}/entry/{entry_id}/event/{event}/picks/") or {}
+
+###############################
+# ปรับปรุง Table Headers ให้ User-Friendly
+###############################
+
+# 1. สร้าง Dictionary สำหรับแปลง Column Names
+def create_column_mapping():
+    """สร้าง mapping สำหรับแปลงชื่อ column ให้เป็นภาษาไทย/อังกฤษที่เข้าใจง่าย"""
+    
+    # Thai + English Headers
+    thai_english_headers = {
+        "web_name": "ชื่อนักเตะ (Name)",
+        "team_short": "ทีม (Team)",
+        "element_type": "ตำแหน่ง (Position)",
+        "pos": "ตำแหน่ง (Pos)",
+        "now_cost": "ราคา (Price)",
+        "price": "ราคา (Price)",
+        "form": "ฟอร์ม (Form)",
+        "avg_fixture_ease": "ความยากของเกม (Fixture)",
+        "fixture_ease": "ความยากของเกมถัดไป (Fixture)",
+        "pred_points": "คะแนนคาดการณ์ (Pred Points)",
+        "points_per_game": "คะแนน/เกม (PPG)",
+        "total_points": "คะแนนรวม (Total Pts)",
+        "selected_by_percent": "% เลือก (Selected %)",
+        "ict_index": "ICT Index",
+        "play_prob": "โอกาสลงเล่น (Play %)",
+        "num_fixtures": "จำนวนแมตช์ (Fixtures)",
+        "out_name": "ขายออก (Out)",
+        "in_name": "ซื้อเข้า (In)",
+        "delta_points": "ผลต่าง(Points)",
+        "net_gain": "กำไรสุทธิ",
+        "out_cost": "ราคาขาย (£)",
+        "in_cost": "ราคาซื้อ (£)",
+        "hit_cost": "ค่าแรงลบ (Hit Cost)"
+    }
+    
+    # English Only Headers (สำหรับคนที่ต้องการแค่ภาษาอังกฤษ)
+    english_headers = {
+        "web_name": "Player Name",
+        "team_short": "Team",
+        "element_type": "Position",
+        "pos": "Pos",
+        "now_cost": "Price (£)",
+        "price": "Price (£)",
+        "form": "Form",
+        "avg_fixture_ease": "Fixture Difficulty",
+        "fixture_ease": "Fixture Difficulty",
+        "pred_points": "Predicted Points",
+        "points_per_game": "Points Per Game",
+        "total_points": "Total Points",
+        "selected_by_percent": "Selected %",
+        "ict_index": "ICT Index",
+        "play_prob": "Play Probability",
+        "num_fixtures": "Fixtures",
+        "out_name": "Player Out",
+        "in_name": "Player In",
+        "delta_points": "Points Difference",
+        "net_gain": "Net Gain",
+        "out_cost": "Selling Price",
+        "in_cost": "Buying Price",
+        "hit_cost": "Hit Cost"
+    }
+    
+    return thai_english_headers, english_headers
+
+# 2. ฟังก์ชันสำหรับจัดรูปแบบ DataFrame
+def format_dataframe(df, language="thai_english"):
+    """จัดรูปแบบ DataFrame ให้สวยงามและเข้าใจง่าย"""
+    
+    thai_english_headers, english_headers = create_column_mapping()
+    
+    # เลือก header mapping ตามภาษา
+    if language == "thai_english":
+        headers = thai_english_headers
+    else:
+        headers = english_headers
+    
+    # สำเนา DataFrame เพื่อไม่ให้กระทบต้นฉบับ
+    formatted_df = df.copy()
+    
+    # เปลี่ยนชื่อ column
+    formatted_df.columns = [headers.get(col, col) for col in formatted_df.columns]
+    
+    return formatted_df
+
+# 3. ฟังก์ชันสำหรับจัดรูปแบบตัวเลข
+def format_numbers_in_dataframe(df):
+    """จัดรูปแบบตัวเลขในตารางให้อ่านง่าย"""
+    
+    formatted_df = df.copy()
+    
+    # จัดรูปแบบตัวเลขต่างๆ
+    for col in formatted_df.columns:
+        if formatted_df[col].dtype in ['float64', 'int64']:
+            # ราคา (มี £ หรือ price ในชื่อ)
+            if any(keyword in col.lower() for keyword in ['price', '£', 'cost', 'ราคา']):
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"£{x:.1f}m" if pd.notnull(x) else "")
+            
+            # เปอร์เซ็นต์
+            elif any(keyword in col.lower() for keyword in ['%', 'percent', 'prob']):
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.1f}%" if pd.notnull(x) else "")
+            
+            # คะแนน
+            elif any(keyword in col.lower() for keyword in ['points', 'คะแนน', 'form', 'ฟอร์ม']):
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "")
+            
+            # ตัวเลขทั่วไป
+            else:
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "")
+    
+    return formatted_df
+
+# 4. ฟังก์ชันสำหรับเพิ่ม Color Coding
+def add_color_coding(df, score_columns=None):
+    """เพิ่มสีให้กับตารางตามค่าของคะแนน"""
+
+    if score_columns is None:
+        score_columns = ['pred_points', 'form', 'delta_points', 'net_gain']
+
+    def highlight_scores(row):
+        colors = []
+        for col in row.index:
+            original_col_name = col.lower()
+            # Check if any keyword from score_columns is in the current column name
+            if any(score_col in original_col_name for score_col in score_columns):
+                val = row[col]
+                # Convert string value to float for comparison
+                if isinstance(val, str):
+                    try:
+                        val = float(val.replace('£', '').replace('m', '').replace('%', ''))
+                    except (ValueError, AttributeError):
+                        val = 0
+                
+                # Apply color based on value, with the new 4-color logic.
+                # The order of these conditions is crucial, starting from the highest value.
+                if val >= 7:
+                    colors.append('background-color: #d4edda')  # Light green for high scores
+                elif val >= 5:
+                    colors.append('background-color: #fff3cd')  # Light yellow for medium scores
+                elif val >= 4:
+                    colors.append('background-color: #fce4b3')  # Light orange for medium-low scores
+                elif val < 4:
+                    colors.append('background-color: #f8d7da')  # Light red for low scores
+                else:
+                    colors.append('') # No color for other values
+            else:
+                colors.append('') # No color for non-score columns
+        return colors
+
+    # Apply the styling function.
+    return df.style.apply(highlight_scores, axis=1)
+
+# 5. ฟังก์ชันหลักสำหรับแสดงตาราง
+def display_user_friendly_table(df, title="", language="thai_english",
+                               add_colors=True, height=400):
+    """แสดงตารางที่ user-friendly"""
+    
+    if title:
+        st.subheader(title)
+    
+    # Make a copy to avoid modifying the original dataframe
+    display_df = df.copy()
+    
+    # Format column headers and numbers
+    formatted_df = format_dataframe(display_df, language)
+    formatted_df = format_numbers_in_dataframe(formatted_df)
+    
+    # Apply color coding if requested
+    if add_colors:
+        # Pass the original unformatted df for value-based coloring logic
+        styled_df = add_color_coding(formatted_df)
+        st.dataframe(styled_df, use_container_width=True, height=height)
+    else:
+        st.dataframe(formatted_df, use_container_width=True, height=height)
+
+
+# 6. ฟังก์ชันเสริมสำหรับแสดงผลข้อมูล
+def display_table_section(df: pd.DataFrame, title: str, columns: list = None, height: int = 400):
+    """แสดงตารางข้อมูลในรูปแบบที่กำหนด"""
+    if columns:
+        df = df[columns]
+    display_user_friendly_table(
+        df=df,
+        title=title,
+        language="thai_english",
+        add_colors=True,
+        height=height
+    )
+
+# 7. ฟังก์ชันสำหรับ Custom CSS
+def add_table_css():
+    """เพิ่ม CSS สำหรับปรับแต่งตาราง"""
+    
+    st.markdown("""
+    <style>
+    /* ปรับแต่งตาราง */
+    .dataframe {
+        font-size: 14px !important;
+    }
+    
+    .dataframe th {
+        background-color: #f0f2f6 !important;
+        color: #262730 !important;
+        font-weight: bold !important;
+        text-align: center !important;
+        padding: 12px 8px !important;
+        border-bottom: 2px solid #e6e9ef !important;
+    }
+    
+    .dataframe td {
+        /* เพิ่มโค้ดนี้เข้าไป */
+        text-align: center !important;
+        padding: 8px !important;
+        border-bottom: 1px solid #e6e9ef !important;
+    }
+    
+    /* สำหรับ mobile */
+    @media (max-width: 768px) {
+        .dataframe {
+            font-size: 12px !important;
+        }
+        
+        .dataframe th, .dataframe td {
+            padding: 6px 4px !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 ###############################
 # Data & features
@@ -177,9 +408,9 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
         # Blank Gameweek (BGW)
         if num_fixtures == 0:
             rows.append({
-                'team': team_id, 
-                'num_fixtures': 0, 
-                'total_opp_def_str': 0, 
+                'team': team_id,
+                'num_fixtures': 0,
+                'total_opp_def_str': 0,
                 'avg_fixture_ease': 0
             })
             continue
@@ -423,7 +654,7 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
     
     # หา transfers ที่เป็นไปได้โดยใช้ราคาที่ระมัดระวัง
     conservative_moves = suggest_transfers(
-        current_squad_ids, 
+        current_squad_ids,
         conservative_bank,  # ใช้งบที่ปรับแล้ว
         free_transfers,
         conservative_all_players,
@@ -454,6 +685,9 @@ def main():
     st.set_page_config(page_title="FPL WIZ จัดตัวนักเตะ", layout="wide")
     st.title("🏟️ FPL WIZ จัดตัวนักเตะด้วย AI | FPL WIZ AI-Powered 🤖")
     st.markdown("เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ FPL ในแต่ละสัปดาห์ 🧠")
+    
+    # Add CSS for table styling
+    add_table_css()
 
     with st.sidebar:
         st.header("⚙️ Settings | ตั้งค่า")
@@ -585,19 +819,28 @@ def main():
 
 
     if not submitted:
-        st.header("⭐ Top Projected Players")
-        st.markdown(f"ผู้เล่นที่คาดว่าจะทำคะแนนได้สูงสุดใน GW {target_event}")
-        
-        # แก้ไขชื่อคอลัมน์ 'fixture_ease' เป็น 'avg_fixture_ease'
+        # Create the table for top players
         show_cols = ["web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]
         top_tbl = feat[show_cols].copy()
+        try:
+            
+            # เพิ่มการเปลี่ยนชื่อคอลัมน์ avg_fixture_ease ให้เป็น fixture_ease เพื่อการแสดงผลที่สวยงาม
+            top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
+            top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
+            top_tbl["price"] = (top_tbl["price"] / 10.0)
+            
+            # Sort and display top players
+            top_players = top_tbl.sort_values("pred_points", ascending=False).head(50)
+            display_user_friendly_table(
+                df=top_players,
+                title="⭐ นักเตะที่คาดว่าจะทำคะแนนได้สูงสุด (Top 50 Projected Players)",
+                language="thai_english",
+                add_colors=True,
+                height=1790
+            )
+        except Exception as e:
+            st.error(f"Error creating top players table: {e}")
         
-        # เพิ่มการเปลี่ยนชื่อคอลัมน์ avg_fixture_ease ให้เป็น fixture_ease เพื่อการแสดงผลที่สวยงาม
-        top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
-        top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
-        top_tbl["price"] = (top_tbl["price"] / 10.0).round(1)
-        top_tbl["pred_points"] = top_tbl["pred_points"].round(2)
-        st.dataframe(top_tbl.sort_values("pred_points", ascending=False).head(25), use_container_width=True)
 
     if submitted:
         if entry_id_str:
@@ -648,7 +891,7 @@ def main():
                         wildcard_ids = optimize_wildcard_team(feat, total_value)
                     
                     if wildcard_ids:
-                        squad_df = feat.loc[wildcard_ids].copy() 
+                        squad_df = feat.loc[wildcard_ids].copy()
                         xi_ids, bench_ids = optimize_starting_xi(squad_df)
                     else:
                         st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
@@ -659,7 +902,7 @@ def main():
                     free_transfers_from_api = entry.get('free_transfers', 1)
 
                     pick_ids = [p["element"] for p in picks.get("picks", [])]
-                    squad_df = feat.loc[pick_ids].copy() 
+                    squad_df = feat.loc[pick_ids].copy()
                     
                     overall_points = entry.get('summary_overall_points', 0)
                     gameweek_points = entry.get('summary_event_points', 0)
@@ -671,17 +914,25 @@ def main():
                 if not xi_ids or len(xi_ids) != 11:
                     st.error("Could not form a valid starting XI from your current squad. This can happen with unusual team structures (e.g., during pre-season).")
                     st.write("Current Squad Composition:")
-                    st.dataframe(squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'}).assign(pos=lambda df: df['pos'].map(POSITIONS)))
+                    squad_display_df = squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'})
+                    squad_display_df['pos'] = squad_display_df['pos'].map(POSITIONS)
+                    st.dataframe(squad_display_df)
                 else:
                     xi_df = squad_df.loc[xi_ids].copy()
                     xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
 
                     position_order = ['GK', 'DEF', 'MID', 'FWD']
                     xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
-
-                    xi_df['pred_points'] = xi_df['pred_points'].round(2)
-                    st.markdown("✅ **แนะนำนักเตะ 11 ตัวจริง**")
-                    st.dataframe(xi_df[['web_name', 'team_short', 'pos', 'pred_points']].sort_values('pos'), use_container_width=True, height=420)
+                    
+                    # Sort by the categorical position to maintain order
+                    xi_df = xi_df.sort_values('pos')
+                    
+                    xi_display_df = xi_df[['web_name', 'team_short', 'pos', 'pred_points']]
+                    display_user_friendly_table(
+                        df=xi_display_df,
+                        title="✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)",
+                        height=420 # Adjusted height for 11 players
+                    )
 
                     cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
                     vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
@@ -713,9 +964,13 @@ def main():
                     bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
                     ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                     ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
-                    ordered_bench_df['pred_points'] = ordered_bench_df['pred_points'].round(2)
-                    st.markdown("**ตัวสำรอง (เรียงตามความสามารถ)**")
-                    st.dataframe(ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']], use_container_width=True)
+                    
+                    bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
+                    display_user_friendly_table(
+                        df=bench_display_df,
+                        title="ตัวสำรอง (เรียงตามลำดับ)",
+                        height=175 # Adjusted height for 4 players
+                    )
                     
                     if transfer_strategy == "Wildcard / Free Hit":
                         total_points = squad_df['pred_points'].sum()
@@ -744,8 +999,13 @@ def main():
                                     total_in = normal_df['in_cost'].sum()
                                     total_out = normal_df['out_cost'].sum()
                                     st.info(f"💰 งบประมาณ: ซื้อเข้า **£{total_in:.1f}m** | ขายออก **£{total_out:.1f}m**")
-                                    st.dataframe(normal_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]], 
-                                               use_container_width=True)
+                                    # คำนวณความสูงไดนามิก: ประมาณ 45px สำหรับ Header + 35px ต่อ 1 แถว
+                                    dynamic_height = 45 + (len(normal_df) * 35) 
+                                    display_user_friendly_table(
+                                        df=normal_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]],
+                                        title="",
+                                        height=dynamic_height
+                                    )
                                 else:
                                     st.write("ไม่มีการแนะนำ")
                             
@@ -757,8 +1017,13 @@ def main():
                                     total_in_c = conservative_df['in_cost'].sum()
                                     total_out_c = conservative_df['out_cost'].sum()
                                     st.info(f"💰 งบประมาณ: ซื้อเข้า **£{total_in_c:.1f}m** | ขายออก **£{total_out_c:.1f}m**")
-                                    st.dataframe(conservative_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]], 
-                                               use_container_width=True)
+                                    # คำนวณความสูงไดนามิก: ประมาณ 45px สำหรับ Header + 35px ต่อ 1 แถว
+                                    dynamic_height_c = 45 + (len(conservative_df) * 35)
+                                    display_user_friendly_table(
+                                        df=conservative_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]],
+                                        title="",
+                                        height=dynamic_height_c
+                                    )
                                     st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
                                 else:
                                     st.write("ไม่มีการแนะนำที่ปลอดภัยพอ")
@@ -782,6 +1047,7 @@ def main():
                 <style>
                 .custom-image img {
                     width: 100%;
+                    max-width: 800px;
                     height: auto;
                     display: block;
                     margin: 0 auto;
