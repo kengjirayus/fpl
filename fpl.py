@@ -20,7 +20,7 @@ Notes
 - If you provide a historical CSV (schema documented below), the ML model will be used.
 """
 ###############################
-# V1.1
+# V1.2 ปรับแต่งการแสดงผลของ Suggested Transfers
 ###############################
 
 import os
@@ -576,6 +576,7 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
                     "in_name": in_player["web_name"],
                     "out_pos": POSITIONS[out_player["element_type"]],
                     "in_pos": POSITIONS[in_player["element_type"]],
+                    "in_points": in_player["pred_points"],
                     "delta_points": in_player['pred_points'] - out_player['pred_points'],
                     "in_cost": in_player['now_cost'] / 10.0,
                     "out_cost": out_player['selling_price'] / 10.0,
@@ -979,7 +980,7 @@ def main():
                     
                     else:
                         st.subheader("🔄 Suggested Transfers")
-                        st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ ⚠️ *เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
+                        st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ ⚠️เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ 🔎")
                         with st.spinner("Analyzing potential transfers..."):
                             normal_moves, conservative_moves = suggest_transfers_enhanced(
                                 pick_ids, bank=bank, free_transfers=free_transfers,
@@ -988,48 +989,75 @@ def main():
 
                         if not normal_moves and not conservative_moves:
                             st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองเปลี่ยนกลยุทธ์หรือเพิ่ม Free Transfer")
+                        
                         else:
                             col1, col2 = st.columns(2)
                             
+                            # =========================
+                            # ตารางข้อเสนอหลัก (normal)
+                            # =========================
                             with col1:
                                 st.markdown("#### 📊 ข้อเสนอหลัก (ราคาปัจจุบัน)")
                                 if normal_moves:
                                     normal_df = pd.DataFrame(normal_moves)
                                     normal_df.index = np.arange(1, len(normal_df) + 1)
+                                    
                                     total_in = normal_df['in_cost'].sum()
                                     total_out = normal_df['out_cost'].sum()
-                                    st.info(f"💰 งบประมาณ: ซื้อเข้า **£{total_in:.1f}m** | ขายออก **£{total_out:.1f}m**")
-                                    # คำนวณความสูงไดนามิก: ประมาณ 45px สำหรับ Header + 35px ต่อ 1 แถว
+                                    st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
+                                    
+                                    # คำนวณความสูงไดนามิก
                                     dynamic_height = 45 + (len(normal_df) * 35) 
+                                    
                                     display_user_friendly_table(
-                                        df=normal_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]],
+                                        df=normal_df.rename(columns={
+                                            "out_name": "ขายออก (Out)",
+                                            "out_cost": "ราคาขาย (£)",
+                                            "in_name": "ซื้อเข้า (In)",
+                                            "in_cost": "ราคาซื้อ (£)",
+                                            "in_points": "คะแนนคาดการณ์ (Pred Points)"
+                                        })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
                                         title="",
                                         height=dynamic_height
                                     )
                                 else:
                                     st.write("ไม่มีการแนะนำ")
                             
+                            # =============================
+                            # ตารางข้อเสนอสำรอง (conserve)
+                            # =============================
                             with col2:
                                 st.markdown("#### 🛡️ ข้อเสนอสำรอง (ปรับราคาขายลง)")
                                 if conservative_moves:
                                     conservative_df = pd.DataFrame(conservative_moves)
                                     conservative_df.index = np.arange(1, len(conservative_df) + 1)
+                                    
                                     total_in_c = conservative_df['in_cost'].sum()
                                     total_out_c = conservative_df['out_cost'].sum()
-                                    st.info(f"💰 งบประมาณ: ซื้อเข้า **£{total_in_c:.1f}m** | ขายออก **£{total_out_c:.1f}m**")
-                                    # คำนวณความสูงไดนามิก: ประมาณ 45px สำหรับ Header + 35px ต่อ 1 แถว
+                                    st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
+                                    
+                                    # คำนวณความสูงไดนามิก
                                     dynamic_height_c = 45 + (len(conservative_df) * 35)
+                                    
                                     display_user_friendly_table(
-                                        df=conservative_df[["out_name", "in_name", "delta_points", "net_gain", "out_cost", "in_cost"]],
+                                        df=conservative_df.rename(columns={
+                                            "out_name": "ขายออก (Out)",
+                                            "out_cost": "ราคาขาย (£)",
+                                            "in_name": "ซื้อเข้า (In)",
+                                            "in_cost": "ราคาซื้อ (£)",
+                                            "in_points": "คะแนนคาดการณ์ (Pred Points)"
+                                        })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
                                         title="",
                                         height=dynamic_height_c
                                     )
+                                    
                                     st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
                                 else:
                                     st.write("ไม่มีการแนะนำที่ปลอดภัยพอ")
                             
                             # เพิ่มคำเตือน
                             st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
+
 
             except requests.exceptions.HTTPError as e:
                 st.error(f"Could not fetch data for Team ID {entry_id_str}. Please check if the ID is correct. (Error: {e.response.status_code})")
