@@ -20,7 +20,7 @@ Notes
 - If you provide a historical CSV (schema documented below), the ML model will be used.
 """
 ###############################
-# V1.2 ปรับแต่งการแสดงผลของ Suggested Transfers
+# V1.3 ปรับแต่งการแสดงผลของตาราง Top50 ให้เรียง 1-50
 ###############################
 
 import os
@@ -832,6 +832,14 @@ def main():
             
             # Sort and display top players
             top_players = top_tbl.sort_values("pred_points", ascending=False).head(50)
+
+             # --- Start of new code ---
+            # Reset index to remove player ID and create a new sequential index starting from 1
+            top_players.reset_index(drop=True, inplace=True)
+            top_players.index = np.arange(1, len(top_players) + 1)
+            top_players.index.name = "No."
+            # --- End of new code ---
+
             display_user_friendly_table(
                 df=top_players,
                 title="⭐ นักเตะที่คาดว่าจะทำคะแนนได้สูงสุด (Top 50 Projected Players)",
@@ -839,6 +847,7 @@ def main():
                 add_colors=True,
                 height=1790
             )
+        
         except Exception as e:
             st.error(f"Error creating top players table: {e}")
         
