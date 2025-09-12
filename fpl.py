@@ -20,7 +20,7 @@ Notes
 - If you provide a historical CSV (schema documented below), the ML model will be used.
 """
 ###############################
-# V1.3 ปรับแต่งการแสดงผลของตาราง Top50 ให้เรียง 1-50
+# V1.3.1 Bug fixes - max 3 players per team rule enforced in transfer suggestions
 ###############################
 
 import os
@@ -510,14 +510,18 @@ def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], Lis
 def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int,
                       all_players: pd.DataFrame,
                       strategy: str) -> List[Dict]:
-    """Greedy search for transfers based on the selected strategy."""
-    
+    """Greedy search for transfers based on the selected strategy.
+    Returns a list of move dicts with keys used by the rest of the app
+    (out_id, in_id, in_name, out_cost, in_cost, delta_points, warning, ...).
+    Enforces max 3 players per Premier League team.
+    """
+
     current_squad_df = all_players.loc[current_squad_ids]
     start_ids, _ = optimize_starting_xi(current_squad_df)
-    if not start_ids: return []
+    if not start_ids:
+        return []
     base_sum = float(current_squad_df.loc[start_ids]['pred_points'].sum())
 
-    # Modify transfer limits and hit costs based on strategy
     if strategy == "Free Transfer":
         max_transfers = free_transfers
         hit_cost = float('inf')
@@ -528,79 +532,164 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
         max_transfers = 15
         hit_cost = 0
 
-    position_groups = {}
-    for out_id in current_squad_ids:
-        out_player = all_players.loc[out_id]
-        pos = out_player['element_type']
-        if pos not in position_groups:
-            position_groups[pos] = []
-        position_groups[pos].append(out_id)
+    # Count current players per team
+    current_team_count = {}
+    for pid in current_squad_ids:
+        team_id = int(all_players.loc[pid, 'team'])
+        current_team_count[team_id] = current_team_count.get(team_id, 0) + 1
 
-    potential_moves = []
-    used_in_players = set()
+    # Group squad by position (element_type): 1 GK, 2 DEF, 3 MID, 4 FWD
+    position_groups = {1: [], 2: [], 3: [], 4: []}
+    for pid in current_squad_ids:
+        pos = int(all_players.loc[pid, 'element_type'])
+        position_groups.setdefault(pos, []).append(pid)
+
     remaining_bank = bank
+    used_in_players = set()
+    potential_moves = []
 
-    for pos in sorted(position_groups.keys()):
-        out_ids = position_groups[pos]
-        
-        max_budget_for_pos = all_players.loc[out_ids]['selling_price'].max() + (bank * 10)
-        
-        all_replacements = all_players[
-            (all_players['element_type'] == pos) &
-            (~all_players.index.isin(current_squad_ids)) &
-            (all_players['now_cost'] <= max_budget_for_pos)
-        ].sort_values('pred_points', ascending=False)
+    # Iterate positions in typical order (DEF/MID/FWD/GK not too important)
+    for pos in [1, 2, 3, 4]:
+        out_ids = position_groups.get(pos, [])
+        if not out_ids:
+            continue
 
+        # consider weaker squad players first (ascending predicted points)
         for out_id in sorted(out_ids, key=lambda x: all_players.loc[x, 'pred_points']):
             out_player = all_players.loc[out_id]
-            
-            budget_for_replacement = out_player['selling_price'] + (remaining_bank * 10)
-            
-            valid_replacements = all_replacements[
-                (~all_replacements.index.isin(used_in_players)) &
-                (all_replacements['pred_points'] > out_player['pred_points']) &
-                (all_replacements['now_cost'] <= budget_for_replacement)
-            ]
+            out_team_id = int(out_player['team'])
 
-            if valid_replacements.empty:
+            # budget: player's selling price plus whatever cash we have (bank is in £ *10 in dataset)
+            budget_for_replacement = out_player['selling_price'] + (remaining_bank * 10)
+
+            # candidate pool: same position, not already in squad, within budget and better predicted points
+            all_replacements = all_players[
+                (all_players['element_type'] == out_player['element_type']) &
+                (~all_players.index.isin(current_squad_ids)) &
+                (all_players['now_cost'] <= budget_for_replacement) &
+                (all_players['pred_points'] > out_player['pred_points'])
+            ].sort_values('pred_points', ascending=False)
+
+            if all_replacements.empty:
                 continue
 
-            in_player = valid_replacements.iloc[0]
-            cost_change = (in_player['now_cost'] - out_player['selling_price']) / 10.0
+            best_replacement = None
 
-            if cost_change <= remaining_bank:
-                potential_moves.append({
-                    "out_id": out_id,
-                    "in_id": in_player.name,
-                    "out_name": out_player["web_name"],
-                    "in_name": in_player["web_name"],
-                    "out_pos": POSITIONS[out_player["element_type"]],
-                    "in_pos": POSITIONS[in_player["element_type"]],
-                    "in_points": in_player["pred_points"],
-                    "delta_points": in_player['pred_points'] - out_player['pred_points'],
-                    "in_cost": in_player['now_cost'] / 10.0,
-                    "out_cost": out_player['selling_price'] / 10.0,
-                })
-                used_in_players.add(in_player.name)
-                remaining_bank -= cost_change
+            # Try find a candidate respecting 3-per-team rule
+            for cid, candidate in all_replacements.iterrows():
+                candidate_team_id = int(candidate['team'])
 
-    potential_moves = sorted(potential_moves, key=lambda x: x["delta_points"], reverse=True)
+                # simulate future team counts after swapping out_id -> cid
+                future_team_count = current_team_count.copy()
+                future_team_count[out_team_id] = future_team_count.get(out_team_id, 0) - 1
+                if future_team_count[out_team_id] <= 0:
+                    future_team_count.pop(out_team_id, None)
 
-    final_suggestions = []
-    total_hit_cost = 0
+                future_count = future_team_count.get(candidate_team_id, 0) + 1
+                if future_count > 3:
+                    # would violate 3-per-team -> skip candidate
+                    continue
 
-    for move in potential_moves[:max_transfers]:
-        hit = 0 if len(final_suggestions) < free_transfers else hit_cost
-        total_hit_cost += hit
+                # also skip if we already planned to bring this candidate in
+                if int(cid) in used_in_players:
+                    continue
+
+                # if passes checks, pick as best_replacement (first highest pred_points)
+                best_replacement = candidate
+                best_replacement_id = int(cid)
+                break
+
+            # Fallback: try same-team replacements (if any)
+            if best_replacement is None:
+                same_team_replacements = all_replacements[
+                    (all_replacements['team'] == out_team_id) &
+                    (~all_replacements.index.isin(used_in_players))
+                ]
+                if not same_team_replacements.empty:
+                    # swapping within same team will not increase count for that team,
+                    # so it's safe even when currently at 3 players
+                    best_replacement = same_team_replacements.iloc[0]
+                    best_replacement_id = int(best_replacement.name)
+
+            if best_replacement is None:
+                continue
+
+            # Final team-limit double-check (safety net)
+            future_team_count = current_team_count.copy()
+            future_team_count[out_team_id] = future_team_count.get(out_team_id, 0) - 1
+            if future_team_count[out_team_id] <= 0:
+                future_team_count.pop(out_team_id, None)
+            if future_team_count.get(int(best_replacement['team']), 0) + 1 > 3:
+                continue
+
+            # cost change (in - out) in £ (dataset stores cost*10)
+            cost_change = (best_replacement['now_cost'] - out_player['selling_price']) / 10.0
+            if cost_change > remaining_bank:
+                continue
+
+            # Update team counts and remaining bank as if we accepted this move (greedy)
+            if out_team_id != int(best_replacement['team']):
+                current_team_count[out_team_id] = current_team_count.get(out_team_id, 0) - 1
+                if current_team_count[out_team_id] <= 0:
+                    current_team_count.pop(out_team_id, None)
+                current_team_count[int(best_replacement['team'])] = current_team_count.get(int(best_replacement['team']), 0) + 1
+
+            remaining_bank = round(max(0.0, remaining_bank - cost_change), 2)
+            used_in_players.add(best_replacement_id)
+
+            # build move dict (match keys used elsewhere)
+            move = {
+                "out_id": int(out_id),
+                "in_id": best_replacement_id,
+                "out_name": out_player.get("web_name", ""),
+                "in_name": best_replacement.get("web_name", ""),
+                "out_pos": POSITIONS.get(int(out_player["element_type"]), str(out_player["element_type"])),
+                "in_pos": POSITIONS.get(int(best_replacement["element_type"]), str(best_replacement["element_type"])),
+                "out_team": out_player.get("team_short", ""),
+                "in_team": best_replacement.get("team_short", ""),
+                "in_points": float(best_replacement.get("pred_points", 0.0)),
+                "delta_points": float(best_replacement.get('pred_points', 0.0) - out_player.get('pred_points', 0.0)),
+                "in_cost": float(best_replacement.get('now_cost', 0.0)) / 10.0,
+                "out_cost": float(out_player.get('selling_price', 0.0)) / 10.0,
+            }
+
+            # warning if after this move you'll have 3 players from that team (informational)
+            if current_team_count.get(int(best_replacement['team']), 0) == 3:
+                move["warning"] = f"Already have 3 players from {best_replacement.get('team_short','')}"
+
+            # ✅ Hard rule: absolutely forbid >3 per team
+            future_team_count = current_team_count.copy()
+            future_team_count[out_team_id] = future_team_count.get(out_team_id, 0) - 1
+            if future_team_count[out_team_id] <= 0:
+                future_team_count.pop(out_team_id, None)
+            if future_team_count.get(int(best_replacement['team']), 0) + 1 > 3:
+                continue  # skip this move, it would create 4th player from same team
         
-        net_gain = move["delta_points"]
+            potential_moves.append(move)
+
+    # Rank moves by expected points gain
+    potential_moves.sort(key=lambda x: x.get("delta_points", 0.0), reverse=True)
+
+    # Final selection applying hits / free transfer logic
+    final_suggestions = []
+    total_hit_cost = 0.0
+    for i, move in enumerate(potential_moves):
+        if len(final_suggestions) >= max_transfers:
+            break
+
+        hit = 0 if len(final_suggestions) < free_transfers else hit_cost
+        total_hit_cost += (hit if hit is not None else 0)
+
+        net_gain = move["delta_points"] - (hit if hit is not None else 0)
+        # original code had some scaling for hit moves; keep it mild
         if hit > 0:
             net_gain = net_gain * 2.5 - total_hit_cost
 
         if strategy == "Free Transfer" or net_gain > -0.1:
-            move['net_gain'] = round(net_gain, 2)
-            move['hit_cost'] = hit
-            final_suggestions.append(move)
+            m = move.copy()
+            m['net_gain'] = round(net_gain, 2)
+            m['hit_cost'] = hit
+            final_suggestions.append(m)
 
     return final_suggestions
 
