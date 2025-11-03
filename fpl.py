@@ -22,7 +22,7 @@ Notes
 - If you provide a historical CSV (schema documented below), the ML model will be used.
 """
 ###############################
-# V1.4 - Add Simulation Mode and fix state logic
+# V1.4.2 - Reordered UI flow
 ###############################
 
 import os
@@ -1178,7 +1178,90 @@ def main():
                     
                     st.markdown("---")
                     
-                    # --- START: NEW SIMULATION SECTION ---
+
+                    # --- Original Transfer Suggestion Section ---
+                    st.subheader("🔄 Suggested Transfers (Based on API Team)")
+                    st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ (ข้อมูลจาก API) ⚠️ *เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
+                    with st.spinner("Analyzing potential transfers..."):
+                        normal_moves, conservative_moves = suggest_transfers_enhanced(
+                            pick_ids, bank=bank, free_transfers=free_transfers,
+                            all_players=feat, strategy=transfer_strategy
+                        )
+
+                    if not normal_moves and not conservative_moves:
+                        st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองเปลี่ยนกลยุทธ์หรือเพิ่ม Free Transfer")
+                    
+                    else:
+                        col1, col2 = st.columns(2)
+                        
+                        # =========================
+                        # ตารางข้อเสนอหลัก (normal)
+                        # =========================
+                        with col1:
+                            st.markdown("#### 📊 ข้อเสนอหลัก (ราคาปัจจุบัน)")
+                            if normal_moves:
+                                normal_df = pd.DataFrame(normal_moves)
+                                normal_df.index = np.arange(1, len(normal_df) + 1)
+                                
+                                total_in = normal_df['in_cost'].sum()
+                                total_out = normal_df['out_cost'].sum()
+                                st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
+                                
+                                # คำนวณความสูงไดนามิก
+                                dynamic_height = 45 + (len(normal_df) * 35) 
+                                
+                                display_user_friendly_table(
+                                    df=normal_df.rename(columns={
+                                        "out_name": "ขายออก (Out)",
+                                        "out_cost": "ราคาขาย (£)",
+                                        "in_name": "ซื้อเข้า (In)",
+                                        "in_cost": "ราคาซื้อ (£)",
+                                        "in_points": "คะแนนคาดการณ์ (Pred Points)"
+                                    })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
+                                    title="",
+                                    height=dynamic_height
+                                )
+                            else:
+                                st.write("ไม่มีการแนะนำ")
+                        
+                        # =============================
+                        # ตารางข้อเสนอสำรอง (conserve)
+                        # =============================
+                        with col2:
+                            st.markdown("#### 🛡️ ข้อเสนอสำรอง (ปรับราคาขายลง)")
+                            if conservative_moves:
+                                conservative_df = pd.DataFrame(conservative_moves)
+                                conservative_df.index = np.arange(1, len(conservative_df) + 1)
+                                
+                                total_in_c = conservative_df['in_cost'].sum()
+                                total_out_c = conservative_df['out_cost'].sum()
+                                st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
+                                
+                                # คำนวณความสูงไดนามิก
+                                dynamic_height_c = 45 + (len(conservative_df) * 35)
+                                
+                                display_user_friendly_table(
+                                    df=conservative_df.rename(columns={
+                                        "out_name": "ขายออก (Out)",
+                                        "out_cost": "ราคาขาย (£)",
+                                        "in_name": "ซื้อเข้า (In)",
+                                        "in_cost": "ราคาซื้อ (£)",
+                                        "in_points": "คะแนนคาดการณ์ (Pred Points)"
+                                    })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
+                                    title="",
+                                    height=dynamic_height_c
+                                )
+                                
+                                st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
+                            else:
+                                st.write("ไม่มีการแนะนำที่ปลอดภัยพอ")
+                        
+                        # เพิ่มคำเตือน
+                        st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
+                    
+                    st.markdown("---")
+                    
+                    # --- START: NEW SIMULATION SECTION (MOVED) ---
                     st.subheader("🛠️ ทดลองจัดทีม (Simulation Mode)")
                     st.markdown("ใช้ส่วนนี้เพื่อจำลองการย้ายทีมของคุณ *หลังจาก* ที่คุณกดยืนยันใน FPL แล้ว แต่ API ยังไม่อัปเดต")
                     
@@ -1241,12 +1324,10 @@ def main():
                             new_simulated_ids.append(new_player_id)
                     
                     # Update session state *if* there's a change
-                    # This check is still useful to avoid unnecessary writes
                     if new_simulated_ids != current_sim_ids:
                         st.session_state.simulated_squad_ids = new_simulated_ids
-                        # --- BUGFIX: Removed st.rerun() ---
-                        # The page will update naturally on the next interaction
-                        # or at the end of this script run.
+                        # Rerun to update the text display in col1
+                        st.rerun()
 
                     st.markdown("---")
                     
@@ -1329,88 +1410,7 @@ def main():
                                 )
                     
                     st.markdown("---")
-                    # --- END: NEW SIMULATION SECTION ---
-
-
-                    # --- Original Transfer Suggestion Section ---
-                    st.subheader("🔄 Suggested Transfers (Based on API Team)")
-                    st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ (ข้อมูลจาก API) ⚠️ *เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
-                    with st.spinner("Analyzing potential transfers..."):
-                        normal_moves, conservative_moves = suggest_transfers_enhanced(
-                            pick_ids, bank=bank, free_transfers=free_transfers,
-                            all_players=feat, strategy=transfer_strategy
-                        )
-
-                    if not normal_moves and not conservative_moves:
-                        st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองเปลี่ยนกลยุทธ์หรือเพิ่ม Free Transfer")
-                    
-                    else:
-                        col1, col2 = st.columns(2)
-                        
-                        # =========================
-                        # ตารางข้อเสนอหลัก (normal)
-                        # =========================
-                        with col1:
-                            st.markdown("#### 📊 ข้อเสนอหลัก (ราคาปัจจุบัน)")
-                            if normal_moves:
-                                normal_df = pd.DataFrame(normal_moves)
-                                normal_df.index = np.arange(1, len(normal_df) + 1)
-                                
-                                total_in = normal_df['in_cost'].sum()
-                                total_out = normal_df['out_cost'].sum()
-                                st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
-                                
-                                # คำนวณความสูงไดนามิก
-                                dynamic_height = 45 + (len(normal_df) * 35) 
-                                
-                                display_user_friendly_table(
-                                    df=normal_df.rename(columns={
-                                        "out_name": "ขายออก (Out)",
-                                        "out_cost": "ราคาขาย (£)",
-                                        "in_name": "ซื้อเข้า (In)",
-                                        "in_cost": "ราคาซื้อ (£)",
-                                        "in_points": "คะแนนคาดการณ์ (Pred Points)"
-                                    })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
-                                    title="",
-                                    height=dynamic_height
-                                )
-                            else:
-                                st.write("ไม่มีการแนะนำ")
-                        
-                        # =============================
-                        # ตารางข้อเสนอสำรอง (conserve)
-                        # =============================
-                        with col2:
-                            st.markdown("#### 🛡️ ข้อเสนอสำรอง (ปรับราคาขายลง)")
-                            if conservative_moves:
-                                conservative_df = pd.DataFrame(conservative_moves)
-                                conservative_df.index = np.arange(1, len(conservative_df) + 1)
-                                
-                                total_in_c = conservative_df['in_cost'].sum()
-                                total_out_c = conservative_df['out_cost'].sum()
-                                st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
-                                
-                                # คำนวณความสูงไดนามิก
-                                dynamic_height_c = 45 + (len(conservative_df) * 35)
-                                
-                                display_user_friendly_table(
-                                    df=conservative_df.rename(columns={
-                                        "out_name": "ขายออก (Out)",
-                                        "out_cost": "ราคาขาย (£)",
-                                        "in_name": "ซื้อเข้า (In)",
-                                        "in_cost": "ราคาซื้อ (£)",
-                                        "in_points": "คะแนนคาดการณ์ (Pred Points)"
-                                    })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
-                                    title="",
-                                    height=dynamic_height_c
-                                )
-                                
-                                st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
-                            else:
-                                st.write("ไม่มีการแนะนำที่ปลอดภัยพอ")
-                        
-                        # เพิ่มคำเตือน
-                        st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
+                    # --- END: NEW SIMULATION SECTION (MOVED) ---
 
 
             except requests.exceptions.HTTPError as e:
@@ -1432,3 +1432,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
