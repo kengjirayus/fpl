@@ -3,26 +3,23 @@ FPL Weekly Assistant — single-file Streamlit app (Thai Updated Version)
 
 What it does
 - Pulls live data from FPL API (bootstrap-static, fixtures, entry picks)
-- Engineers features (recent form, xGI proxy, minutes reliability, fixture difficulty)
-- Predicts next GW points with a hybrid approach:
-  • If you have a local historical CSV (optional), trains a RandomForestRegressor
-  • Otherwise uses a robust heuristic model tailored to FPL signals
-- Optimizes your Starting XI & bench order subject to FPL formation rules
-- Suggests transfers based on selected strategy (Free, Hits, or Wildcard) to maximize net expected points
-- Includes a "Simulation Mode" to manually edit your 15-man squad and re-optimize
-          after making transfers, before the FPL API updates.
+- Engineers features (recent form, xGI proxy, minutes reliability, fixture difficulty, photo_url)
+- Predicts next GW points with a hybrid approach
+- Optimizes your Starting XI & bench order
+- Suggests transfers based on selected strategy
+- Shows Top 50 table with player images
+- Displays Starting XI in a "Pitch View" or "List View"
+- Includes a "Simulation Mode" to manually edit your 15-man squad
 
 How to run
 1) pip install streamlit pandas numpy scikit-learn pulp requests
-2) streamlit run fpl.py
+2) streamlit run fpl_with_images.py
 
 Notes
 - This app reads public FPL endpoints. No login required.
-- Transfer suggestions consider the upcoming GW only by default.
-- If you provide a historical CSV (schema documented below), the ML model will be used.
 """
 ###############################
-# V1.4.2 - Reordered UI flow
+# V1.5 - Add Images and Pitch View
 ###############################
 
 import os
@@ -161,7 +158,8 @@ def create_column_mapping():
         "net_gain": "กำไรสุทธิ",
         "out_cost": "ราคาขาย (£)",
         "in_cost": "ราคาซื้อ (£)",
-        "hit_cost": "ค่าแรงลบ (Hit Cost)"
+        "hit_cost": "ค่าแรงลบ (Hit Cost)",
+        "photo_url": "รูป" # Added for image
     }
     
     # English Only Headers (สำหรับคนที่ต้องการแค่ภาษาอังกฤษ)
@@ -188,7 +186,8 @@ def create_column_mapping():
         "net_gain": "Net Gain",
         "out_cost": "Selling Price",
         "in_cost": "Buying Price",
-        "hit_cost": "Hit Cost"
+        "hit_cost": "Hit Cost",
+        "photo_url": "Photo" # Added for image
     }
     
     return thai_english_headers, english_headers
@@ -280,10 +279,10 @@ def add_color_coding(df, score_columns=None):
     # Apply the styling function.
     return df.style.apply(highlight_scores, axis=1)
 
-# 5. ฟังก์ชันหลักสำหรับแสดงตาราง
+# 5. ฟังก์ชันหลักสำหรับแสดงตาราง (Legacy)
 def display_user_friendly_table(df, title="", language="thai_english",
                                add_colors=True, height=400):
-    """แสดงตารางที่ user-friendly"""
+    """แสดงตารางที่ user-friendly (แบบดั้งเดิม)"""
     
     if title:
         st.subheader(title)
@@ -304,9 +303,9 @@ def display_user_friendly_table(df, title="", language="thai_english",
         st.dataframe(formatted_df, use_container_width=True, height=height)
 
 
-# 6. ฟังก์ชันเสริมสำหรับแสดงผลข้อมูล
+# 6. ฟังก์ชันเสริมสำหรับแสดงผลข้อมูล (Legacy)
 def display_table_section(df: pd.DataFrame, title: str, columns: list = None, height: int = 400):
-    """แสดงตารางข้อมูลในรูปแบบที่กำหนด"""
+    """แสดงตารางข้อมูลในรูปแบบที่กำหนด (แบบดั้งเดิม)"""
     if columns:
         df = df[columns]
     display_user_friendly_table(
@@ -448,8 +447,11 @@ def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFr
     elements['num_fixtures'] = elements['num_fixtures'].fillna(0).astype(int)
     elements['avg_fixture_ease'] = elements['avg_fixture_ease'].fillna(0)
 
-    for col in ["form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts"]:
+    for col in ["form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts", "code"]:
         elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
+    
+    # --- NEW: Add photo_url ---
+    elements['photo_url'] = 'https://resources.premierleague.com/premierleague/photos/players/110x140/p' + elements['code'].astype(int).astype(str) + '.png'
     
     elements["chance_of_playing_next_round"] = pd.to_numeric(elements["chance_of_playing_next_round"], errors="coerce").fillna(100)
     elements["play_prob"] = elements["chance_of_playing_next_round"] / 100.0
@@ -517,10 +519,17 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
     (out_id, in_id, in_name, out_cost, in_cost, delta_points, warning, ...).
     Enforces max 3 players per Premier League team.
     """
+    
+    # Ensure squad IDs are valid
+    valid_squad_ids = [pid for pid in current_squad_ids if pid in all_players.index]
+    if not valid_squad_ids:
+        st.error("No valid players found in current squad for transfer suggestion.")
+        return []
 
-    current_squad_df = all_players.loc[current_squad_ids]
+    current_squad_df = all_players.loc[valid_squad_ids]
     start_ids, _ = optimize_starting_xi(current_squad_df)
     if not start_ids:
+        st.error("Could not optimize starting XI for transfer suggestions.")
         return []
     base_sum = float(current_squad_df.loc[start_ids]['pred_points'].sum())
 
@@ -536,13 +545,13 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
 
     # Count current players per team
     current_team_count = {}
-    for pid in current_squad_ids:
+    for pid in valid_squad_ids:
         team_id = int(all_players.loc[pid, 'team'])
         current_team_count[team_id] = current_team_count.get(team_id, 0) + 1
 
     # Group squad by position (element_type): 1 GK, 2 DEF, 3 MID, 4 FWD
     position_groups = {1: [], 2: [], 3: [], 4: []}
-    for pid in current_squad_ids:
+    for pid in valid_squad_ids:
         pos = int(all_players.loc[pid, 'element_type'])
         position_groups.setdefault(pos, []).append(pid)
 
@@ -567,7 +576,7 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
             # candidate pool: same position, not already in squad, within budget and better predicted points
             all_replacements = all_players[
                 (all_players['element_type'] == out_player['element_type']) &
-                (~all_players.index.isin(current_squad_ids)) &
+                (~all_players.index.isin(valid_squad_ids)) & # Use valid_squad_ids
                 (all_players['now_cost'] <= budget_for_replacement) &
                 (all_players['pred_points'] > out_player['pred_points'])
             ].sort_values('pred_points', ascending=False)
@@ -604,7 +613,7 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
             # Fallback: try same-team replacements (if any)
             if best_replacement is None:
                 same_team_replacements = all_replacements[
-                    (all_replacements['team'] == out_team_id) &
+                    (all_players['team'] == out_team_id) &
                     (~all_replacements.index.isin(used_in_players))
                 ]
                 if not same_team_replacements.empty:
@@ -730,6 +739,7 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
     # การแนะนำแบบระมัดระวัง
     conservative_all_players = all_players.copy()
     for player_id in current_squad_ids:
+        if player_id not in all_players.index: continue
         current_price = all_players.loc[player_id, 'selling_price']
         # ลดราคาขายลง 0.2 เพื่อความปลอดภัย
         conservative_price = max(current_price - 2, current_price * 0.95)  # ลดขั้นต่ำ 0.2 หรือ 5%
@@ -738,9 +748,10 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
     # คำนวณงบที่มีอยู่จริงหลังจากลดราคาขาย
     conservative_bank = bank
     for move in normal_moves:
-        out_id = move['out_id']
-        original_price = all_players.loc[out_id, 'selling_price']
-        conservative_price = conservative_all_players.loc[out_id, 'selling_price']
+        if move['out_id'] not in all_players.index: # Safety check
+            continue
+        original_price = all_players.loc[move['out_id'], 'selling_price']
+        conservative_price = conservative_all_players.loc[move['out_id'], 'selling_price']
         price_diff = (original_price - conservative_price) / 10.0
         conservative_bank = max(0, conservative_bank - price_diff)
     
@@ -762,12 +773,200 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
         if move['in_id'] not in used_players:
             cost_change = move['in_cost'] - move['out_cost']
             if cost_change <= remaining_bank:
-                move['out_cost'] = round(conservative_all_players.loc[move['out_id'], 'selling_price'] / 10.0, 1)
-                filtered_conservative_moves.append(move)
-                remaining_bank -= cost_change
-                used_players.add(move['in_id'])
+                if move['out_id'] in conservative_all_players.index: # Safety check
+                    move['out_cost'] = round(conservative_all_players.loc[move['out_id'], 'selling_price'] / 10.0, 1)
+                    filtered_conservative_moves.append(move)
+                    remaining_bank -= cost_change
+                    used_players.add(move['in_id'])
     
     return normal_moves, filtered_conservative_moves
+
+
+###############################
+# --- NEW: Pitch View Function ---
+###############################
+
+def display_pitch_view(team_df: pd.DataFrame, title: str):
+    """
+    Displays the 11-man squad on a football pitch using HTML/CSS.
+    """
+    st.subheader(title)
+
+    # Define CSS for the pitch and players
+    pitch_css = """
+    <style>
+    .pitch-container {
+        position: relative;
+        width: 100%;
+        max-width: 600px; /* Max width for better layout */
+        margin: 20px auto;
+        background-image: url('https://raw.githubusercontent.com/kengjirayus/fpl/refs/heads/main/Pix/FPL-Wiz-Field.png');
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center;
+        aspect-ratio: 7/10; /* Proportion of a pitch */
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        padding: 5% 0; /* Padding top/bottom to space out rows */
+    }
+    .pitch-row {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        width: 100%;
+        margin-bottom: 10%; /* Space between rows */
+    }
+    .player-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        width: 80px; /* Fixed width for card */
+    }
+    .player-card img {
+        width: 60px;
+        height: 80px;
+        margin-bottom: 4px;
+        /* Fallback for broken images */
+        background-color: #eee;
+        border-radius: 4px;
+        object-fit: cover;
+    }
+    .player-name {
+        font-size: 11px;
+        font-weight: bold;
+        color: white;
+        background-color: rgba(0, 0, 0, 0.7);
+        padding: 2px 5px;
+        border-radius: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        width: 100%;
+        box-sizing: border-box; /* Include padding in width */
+    }
+    .player-info {
+        font-size: 10px;
+        color: #f0f0f0;
+        background-color: rgba(50, 50, 50, 0.6);
+        padding: 1px 4px;
+        border-radius: 4px;
+        margin-top: 2px;
+    }
+    </style>
+    """
+    
+    # Separate players by position
+    team_df['pos'] = team_df['element_type'].map(POSITIONS)
+    gk = team_df[team_df['pos'] == 'GK']
+    defs = team_df[team_df['pos'] == 'DEF'].sort_values('pred_points', ascending=False)
+    mids = team_df[team_df['pos'] == 'MID'].sort_values('pred_points', ascending=False)
+    fwds = team_df[team_df['pos'] == 'FWD'].sort_values('pred_points', ascending=False)
+
+    def generate_player_html(player_row):
+        # Add captain/vice-captain logic
+        name = player_row['web_name']
+        if player_row.get('is_captain', False):
+            name = f"{name} (C)"
+        elif player_row.get('is_vice_captain', False):
+            name = f"{name} (V)"
+            
+        # --- BUGFIX v1.5.5: Use outer DOUBLE quotes, inner SINGLE quotes ---
+        return f"<div class='player-card'><img src='{player_row['photo_url']}' alt='{player_row['web_name']}'><div class='player-name'>{name}</div><div class='player-info'>{player_row['team_short']} | {player_row['pred_points']:.1f}pts</div></div>"
+
+    # Build HTML string
+    html = f"{pitch_css}<div class='pitch-container'>"
+    
+    # GK Row
+    html += "<div class='pitch-row'>"
+    for _, player in gk.iterrows():
+        html += generate_player_html(player)
+    html += "</div>"
+    
+    # DEF Row
+    html += "<div class='pitch-row'>"
+    for _, player in defs.iterrows():
+        html += generate_player_html(player)
+    html += "</div>"
+    
+    # MID Row
+    html += "<div class='pitch-row'>"
+    for _, player in mids.iterrows():
+        html += generate_player_html(player)
+    html += "</div>"
+    
+    # FWD Row
+    html += "<div class='pitch-row'>"
+    for _, player in fwds.iterrows():
+        html += generate_player_html(player)
+    html += "</div>"
+    
+    html += "</div>"
+    
+    st.markdown(html, unsafe_allow_html=True)
+
+###############################
+# --- NEW: Top 50 Image Table Function ---
+###############################
+
+def display_top_50_with_images(df: pd.DataFrame, title: str):
+    """
+    Displays the Top 50 players using st.data_editor with images.
+    """
+    st.subheader(title)
+    
+    # Prepare dataframe
+    df_display = df.copy()
+    df_display["pos"] = df_display["pos"].map(POSITIONS)
+    df_display["price"] = (df_display["price"] / 10.0)
+    
+    # Sort and get top 50
+    top_players = df_display.sort_values("pred_points", ascending=False).head(50)
+    
+    # Reset index to show 'No.'
+    top_players.reset_index(drop=True, inplace=True)
+    top_players.index = np.arange(1, len(top_players) + 1)
+    top_players.index.name = "ลำดับ"
+    
+    # Select columns for display
+    cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"]
+    top_players_display = top_players[cols_to_show]
+
+    # Use st.data_editor with column_config
+    st.data_editor(
+        top_players_display,
+        column_config={
+            "photo_url": st.column_config.ImageColumn(
+                "รูป", help="รูปนักเตะ", width="small"
+            ),
+            "web_name": st.column_config.TextColumn(
+                "ชื่อนักเตะ", width="medium"
+            ),
+            "team_short": st.column_config.TextColumn(
+                "ทีม", width="small"
+            ),
+            "pos": st.column_config.TextColumn(
+                "ตำแหน่ง", width="small"
+            ),
+            "price": st.column_config.NumberColumn(
+                "ราคา (£)", format="£%.1f"
+            ),
+            "form": st.column_config.NumberColumn(
+                "ฟอร์ม", format="%.1f"
+            ),
+            "fixture_ease": st.column_config.NumberColumn(
+                "ความง่าย", help="ความง่ายของเกมถัดไป", format="%.2f"
+            ),
+            "pred_points": st.column_config.NumberColumn(
+                "คะแนนคาดการณ์", format="%.1f"
+            ),
+        },
+        column_order=("ลำดับ", "photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"),
+        use_container_width=True,
+        height=1800, # Height for ~50 players
+        disabled=True # Read-only
+    )
+
 
 ###############################
 # Streamlit UI
@@ -938,35 +1137,19 @@ def main():
     # --- BUGFIX: Change main logic to check session state ---
     if not st.session_state.get('analysis_submitted', False):
         # Create the table for top players
-        show_cols = ["web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]
+        show_cols = ["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]
         top_tbl = feat[show_cols].copy()
         try:
-            
-            # เพิ่มการเปลี่ยนชื่อคอลัมน์ avg_fixture_ease ให้เป็น fixture_ease เพื่อการแสดงผลที่สวยงาม
+            # --- NEW: Use st.data_editor for Top 50 ---
             top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
-            top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
-            top_tbl["price"] = (top_tbl["price"] / 10.0)
-            
-            # Sort and display top players
-            top_players = top_tbl.sort_values("pred_points", ascending=False).head(50)
-
-             # --- Start of new code ---
-            # Reset index to remove player ID and create a new sequential index starting from 1
-            top_players.reset_index(drop=True, inplace=True)
-            top_players.index = np.arange(1, len(top_players) + 1)
-            top_players.index.name = "No."
-            # --- End of new code ---
-
-            display_user_friendly_table(
-                df=top_players,
-                title="⭐ นักเตะที่คาดว่าจะทำคะแนนได้สูงสุด (Top 50 Projected Players)",
-                language="thai_english",
-                add_colors=True,
-                height=1790
+            display_top_50_with_images(
+                df=top_tbl,
+                title="⭐ นักเตะที่คาดว่าจะทำคะแนนได้สูงสุด (Top 50 Projected Players)"
             )
         
         except Exception as e:
             st.error(f"Error creating top players table: {e}")
+            st.exception(e) # Show full error
         
         # Show landing page info only if not submitted
         st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
@@ -996,12 +1179,17 @@ def main():
         entry_id_str = st.session_state.team_id_input
         
         if entry_id_str:
-            if not entry_id_str.isdigit():
-                st.error("❗ กรุณากรอก FPL Team ID เป็นตัวเลขเท่านั้น")
-                st.session_state.analysis_submitted = False # Reset state
-                st.stop()
+            # --- BUGFIX v1.5.1: Separate ID validation from main logic ---
             try:
+                # 1. Validate ID first
                 entry_id = int(entry_id_str)
+            except (ValueError, TypeError):
+                st.error("❗ กรุณากรอก FPL Team ID เป็นตัวเลขเท่านั้น (Invalid ID)")
+                st.session_state.analysis_submitted = False 
+                st.stop()
+
+            # 2. If ID is valid, proceed with main data fetching and logic
+            try:
                 entry = get_entry(entry_id)
                 ev_for_picks = cur_event or 1
                 picks = get_entry_picks(entry_id, ev_for_picks)
@@ -1009,7 +1197,6 @@ def main():
                 # ========== การจัดการข้อมูล selling_price ที่อาจหายไป ==========
                 picks_data = picks.get("picks", [])
                 
-                #
                 if not picks_data:
                     st.error(f"ไม่สามารถดึงข้อมูลนักเตะสำหรับ Team ID {entry_id} (อาจเป็นเพราะยังไม่เริ่มฤดูกาล หรือ ID ผิด)")
                     st.session_state.analysis_submitted = False # Reset state
@@ -1026,13 +1213,23 @@ def main():
                     elif 'purchase_price' in p and p['purchase_price'] is not None:
                         # คำนวณ selling_price จาก purchase_price
                         purchase_price = p['purchase_price']
-                        now_cost = feat.loc[player_id, 'now_cost']
+                        
+                        # Safety check if player_id is not in feat (e.g., transferred out)
+                        if player_id not in feat.index:
+                            now_cost = purchase_price # Assume no change if not found
+                        else:
+                            now_cost = feat.loc[player_id, 'now_cost']
+                            
                         profit = now_cost - purchase_price
                         selling_price = purchase_price + (profit // 2)  # ปัดเศษลง
                         selling_price_map[player_id] = selling_price
                     else:
                         # fallback สุดท้าย: ใช้ราคาปัจจุบัน
-                        selling_price_map[player_id] = feat.loc[player_id, 'now_cost']
+                        if player_id not in feat.index:
+                            selling_price_map[player_id] = 0 # Or some default
+                        else:
+                            selling_price_map[player_id] = feat.loc[player_id, 'now_cost']
+
 
                 # อัปเดต selling_price ใน DataFrame
                 feat['selling_price'] = feat.index.map(selling_price_map)
@@ -1056,23 +1253,38 @@ def main():
                         st.error("Could not find an optimal wildcard team. This might be due to budget constraints or player availability.")
                         st.stop()
                     
-                    # (ย้ายโค้ดแสดงผล XI/Bench ของ Wildcard มาไว้ที่นี่)
+                    # --- NEW: Pitch View for Wildcard ---
                     xi_df = squad_df.loc[xi_ids].copy()
-                    xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
-                    position_order = ['GK', 'DEF', 'MID', 'FWD']
-                    xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
-                    xi_df = xi_df.sort_values('pos')
                     
-                    xi_display_df = xi_df[['web_name', 'team_short', 'pos', 'pred_points']]
-                    display_user_friendly_table(
-                        df=xi_display_df,
-                        title="✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)",
-                        height=420
-                    )
+                    # Add Captain/Vice
+                    cap_id = xi_df.sort_values("pred_points", ascending=False).iloc[0].name
+                    vc_id = xi_df.sort_values("pred_points", ascending=False).iloc[1].name
+                    xi_df['is_captain'] = xi_df.index == cap_id
+                    xi_df['is_vice_captain'] = xi_df.index == vc_id
 
-                    cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
-                    vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                    st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
+                    # --- BUGFIX v1.5.2: Correct st.tabs syntax ---
+                    tab_pitch_wc, tab_list_wc = st.tabs(["Pitch View ⚽", "List View 📋"])
+
+                    with tab_pitch_wc:
+                        with st.container(border=False):
+                            display_pitch_view(xi_df, "✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)")
+                    
+                    with tab_list_wc:
+                        with st.container(border=False):
+                            st.subheader("✅ แนะนำนักเตะ 11 ตัวจริง (List View)")
+                            xi_df_list = xi_df.copy()
+                            xi_df_list['pos'] = xi_df_list['element_type'].map(POSITIONS)
+                            position_order = ['GK', 'DEF', 'MID', 'FWD']
+                            xi_df_list['pos'] = pd.Categorical(xi_df_list['pos'], categories=position_order, ordered=True)
+                            xi_df_list = xi_df_list.sort_values('pos')
+                            xi_display_df = xi_df_list[['web_name', 'team_short', 'pos', 'pred_points']]
+                            display_user_friendly_table(
+                                df=xi_display_df,
+                                title="", # Title is handled by tab
+                                height=420
+                            )
+
+                    st.success(f"👑 Captain: **{xi_df.loc[cap_id]['web_name']}** | Vice-Captain: **{xi_df.loc[vc_id]['web_name']}**")
                     
                     bench_df = squad_df.loc[bench_ids].copy()
                     bench_gk = bench_df[bench_df['element_type'] == 1]
@@ -1107,7 +1319,12 @@ def main():
                         st.session_state.simulated_squad_ids = pick_ids
                         st.session_state.current_team_id = entry_id
                     
-                    squad_df = feat.loc[pick_ids].copy() # This is the REAL squad from API
+                    # Filter out any pick_ids that might not be in the 'feat' dataframe (e.g. transferred players)
+                    valid_pick_ids = [pid for pid in pick_ids if pid in feat.index]
+                    if len(valid_pick_ids) < len(pick_ids):
+                        st.warning("Some players in your squad could not be found (e.g., transferred out of PL) and were removed.")
+                    
+                    squad_df = feat.loc[valid_pick_ids].copy() # This is the REAL squad from API
                     
                     overall_points = entry.get('summary_overall_points', 0)
                     gameweek_points = entry.get('summary_event_points', 0)
@@ -1116,65 +1333,84 @@ def main():
 
                     # --- Original XI/Bench Display (from API data) ---
                     st.subheader("📊 ทีมปัจจุบัน (ข้อมูลจาก FPL API)")
-                    xi_ids, bench_ids = optimize_starting_xi(squad_df)
-
-                    if not xi_ids or len(xi_ids) != 11:
-                        st.error("ไม่สามารถจัด 11 ตัวจริงจากทีมปัจจุบันของคุณได้ (API).")
-                        squad_display_df = squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'})
-                        squad_display_df['pos'] = squad_display_df['pos'].map(POSITIONS)
-                        st.dataframe(squad_display_df)
+                    
+                    if len(valid_pick_ids) < 15:
+                        st.error(f"ทีมของคุณมีนักเตะไม่ครบ 15 คน (พบ {len(valid_pick_ids)} คน). ไม่สามารถจัดทีมได้.")
                     else:
-                        xi_df = squad_df.loc[xi_ids].copy()
-                        xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
+                        xi_ids, bench_ids = optimize_starting_xi(squad_df)
 
-                        position_order = ['GK', 'DEF', 'MID', 'FWD']
-                        xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
-                        xi_df = xi_df.sort_values('pos')
-                        
-                        xi_display_df = xi_df[['web_name', 'team_short', 'pos', 'pred_points']]
-                        display_user_friendly_table(
-                            df=xi_display_df,
-                            title="✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)",
-                            height=420
-                        )
+                        if not xi_ids or len(xi_ids) != 11:
+                            st.error("ไม่สามารถจัด 11 ตัวจริงจากทีมปัจจุบันของคุณได้ (API).")
+                            squad_display_df = squad_df[['web_name', 'element_type']].rename(columns={'element_type':'pos'})
+                            squad_display_df['pos'] = squad_display_df['pos'].map(POSITIONS)
+                            st.dataframe(squad_display_df)
+                        else:
+                            # --- NEW: Pitch View for API Team ---
+                            xi_df = squad_df.loc[xi_ids].copy()
+                            
+                            # Add Captain/Vice
+                            cap_id = xi_df.sort_values("pred_points", ascending=False).iloc[0].name
+                            vc_id = xi_df.sort_values("pred_points", ascending=False).iloc[1].name
+                            xi_df['is_captain'] = xi_df.index == cap_id
+                            xi_df['is_vice_captain'] = xi_df.index == vc_id
 
-                        cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
-                        vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                        st.success(f"👑 Captain: **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice-Captain: **{vc_row['web_name']}** ({vc_row['team_short']})")
-                        
-                        xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
-                        xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
+                            # --- BUGFIX v1.5.2: Correct st.tabs syntax ---
+                            tab_pitch_api, tab_list_api = st.tabs(["Pitch View ⚽", "List View 📋"])
 
-                        dgw_note = ""
-                        bgw_note = ""
+                            with tab_pitch_api:
+                                with st.container(border=False):
+                                    display_pitch_view(xi_df, "✅ แนะนำนักเตะ 11 ตัวจริง (Suggested Starting XI)")
+                            
+                            with tab_list_api:
+                                with st.container(border=False):
+                                    st.subheader("✅ แนะนำนักเตะ 11 ตัวจริง (List View)")
+                                    xi_df_list = xi_df.copy()
+                                    xi_df_list['pos'] = xi_df_list['element_type'].map(POSITIONS)
+                                    position_order = ['GK', 'DEF', 'MID', 'FWD']
+                                    xi_df_list['pos'] = pd.Categorical(xi_df_list['pos'], categories=position_order, ordered=True)
+                                    xi_df_list = xi_df_list.sort_values('pos')
+                                    xi_display_df = xi_df_list[['web_name', 'team_short', 'pos', 'pred_points']]
+                                    display_user_friendly_table(
+                                        df=xi_display_df,
+                                        title="", # Title is handled by tab
+                                        height=420
+                                    )
 
-                        if len(xi_dgw_teams) > 0:
-                            dgw_note = f"สัปดาห์นี้มี Double Gameweek ของทีม ({', '.join(xi_dgw_teams)})"
-                        if len(xi_bgw_teams) > 0:
-                            bgw_note = f"สัปดาห์นี้มี Blank Gameweek ของทีม ({', '.join(xi_bgw_teams)})"
+                            st.success(f"👑 Captain: **{xi_df.loc[cap_id]['web_name']}** | Vice-Captain: **{xi_df.loc[vc_id]['web_name']}**")
+                            
+                            xi_dgw_teams = xi_df[xi_df['num_fixtures'] > 1]['team_short'].unique()
+                            xi_bgw_teams = xi_df[xi_df['num_fixtures'] == 0]['team_short'].unique()
 
-                        if dgw_note or bgw_note:
-                            full_note = ""
-                            if dgw_note and bgw_note:
-                                full_note = f"{dgw_note}. {bgw_note}."
-                            elif dgw_note:
-                                full_note = f"{dgw_note}."
-                            elif bgw_note:
-                                full_note = f"{bgw_note}."
-                            st.info(f"💡 {full_note}")
-                        
-                        bench_df = squad_df.loc[bench_ids].copy()
-                        bench_gk = bench_df[bench_df['element_type'] == 1]
-                        bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
-                        ordered_bench_df = pd.concat([bench_gk, bench_outfield])
-                        ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
-                        
-                        bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
-                        display_user_friendly_table(
-                            df=bench_display_df,
-                            title="ตัวสำรอง (เรียงตามลำดับ)",
-                            height=175
-                        )
+                            dgw_note = ""
+                            bgw_note = ""
+
+                            if len(xi_dgw_teams) > 0:
+                                dgw_note = f"สัปดาห์นี้มี Double Gameweek ของทีม ({', '.join(xi_dgw_teams)})"
+                            if len(xi_bgw_teams) > 0:
+                                bgw_note = f"สัปดาห์นี้มี Blank Gameweek ของทีม ({', '.join(xi_bgw_teams)})"
+
+                            if dgw_note or bgw_note:
+                                full_note = ""
+                                if dgw_note and bgw_note:
+                                    full_note = f"{dgw_note}. {bgw_note}."
+                                elif dgw_note:
+                                    full_note = f"{dgw_note}."
+                                elif bgw_note:
+                                    full_note = f"{bgw_note}."
+                                st.info(f"💡 {full_note}")
+                            
+                            bench_df = squad_df.loc[bench_ids].copy()
+                            bench_gk = bench_df[bench_df['element_type'] == 1]
+                            bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                            ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                            ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+                            
+                            bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
+                            display_user_friendly_table(
+                                df=bench_display_df,
+                                title="ตัวสำรอง (เรียงตามลำดับ)",
+                                height=175
+                            )
                     
                     st.markdown("---")
                     
@@ -1184,7 +1420,7 @@ def main():
                     st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ (ข้อมูลจาก API) ⚠️ *เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
                     with st.spinner("Analyzing potential transfers..."):
                         normal_moves, conservative_moves = suggest_transfers_enhanced(
-                            pick_ids, bank=bank, free_transfers=free_transfers,
+                            valid_pick_ids, bank=bank, free_transfers=free_transfers,
                             all_players=feat, strategy=transfer_strategy
                         )
 
@@ -1266,7 +1502,7 @@ def main():
                     st.markdown("ใช้ส่วนนี้เพื่อจำลองการย้ายทีมของคุณ *หลังจาก* ที่คุณกดยืนยันใน FPL แล้ว แต่ API ยังไม่อัปเดต")
                     
                     if st.button("♻️ Reset to Current API Team"):
-                        st.session_state.simulated_squad_ids = pick_ids
+                        st.session_state.simulated_squad_ids = valid_pick_ids # Use valid_pick_ids
                         st.rerun()
 
                     st.markdown("#### แก้ไข 15 นักเตะในทีมของคุณ:")
@@ -1279,9 +1515,22 @@ def main():
                     cols[2].markdown("**เลือกนักเตะที่จะเปลี่ยน**")
                     
                     # Use the session_state list as the source of truth
-                    current_sim_ids = st.session_state.get('simulated_squad_ids', pick_ids)
+                    current_sim_ids = st.session_state.get('simulated_squad_ids', valid_pick_ids) # Use valid_pick_ids
+                    
+                    # Ensure current_sim_ids has 15 players, if not, reset
+                    if len(current_sim_ids) != 15:
+                        st.warning("ทีมจำลองของคุณไม่ครบ 15 คน, กำลังรีเซ็ต...")
+                        current_sim_ids = valid_pick_ids
+                        st.session_state.simulated_squad_ids = valid_pick_ids
+
 
                     for i, player_id in enumerate(current_sim_ids):
+                        # Safety check if player_id is valid
+                        if player_id not in feat.index:
+                            st.warning(f"Player ID {player_id} not found in data. Resetting to default.")
+                            player_id = valid_pick_ids[i] # Reset to default
+                            current_sim_ids[i] = player_id
+                        
                         player = feat.loc[player_id]
                         current_player_name_str = player_id_to_name_map.get(player_id)
                         
@@ -1376,24 +1625,38 @@ def main():
                             if not xi_ids_sim or len(xi_ids_sim) != 11:
                                 st.error("เกิดข้อผิดพลาดในการคำนวณ 11 ตัวจริง (Simulated)")
                             else:
-                                # Display XI
-                                xi_df = sim_squad_df.loc[xi_ids_sim].copy()
-                                xi_df['pos'] = xi_df['element_type'].map(POSITIONS)
-                                position_order = ['GK', 'DEF', 'MID', 'FWD']
-                                xi_df['pos'] = pd.Categorical(xi_df['pos'], categories=position_order, ordered=True)
-                                xi_df = xi_df.sort_values('pos')
+                                # --- NEW: Pitch View for Simulated Team ---
+                                xi_df_sim = sim_squad_df.loc[xi_ids_sim].copy()
                                 
-                                xi_display_df = xi_df[['web_name', 'team_short', 'pos', 'pred_points']]
-                                display_user_friendly_table(
-                                    df=xi_display_df,
-                                    title="✅ 11 ตัวจริง (Simulated Team)",
-                                    height=420
-                                )
+                                # Add Captain/Vice
+                                cap_id_sim = xi_df_sim.sort_values("pred_points", ascending=False).iloc[0].name
+                                vc_id_sim = xi_df_sim.sort_values("pred_points", ascending=False).iloc[1].name
+                                xi_df_sim['is_captain'] = xi_df_sim.index == cap_id_sim
+                                xi_df_sim['is_vice_captain'] = xi_df_sim.index == vc_id_sim
+
+                                # --- BUGFIX v1.5.2: Correct st.tabs syntax ---
+                                tab_pitch_sim, tab_list_sim = st.tabs(["Pitch View ⚽", "List View 📋"])
+
+                                with tab_pitch_sim:
+                                    with st.container(border=False):
+                                        display_pitch_view(xi_df_sim, "✅ 11 ตัวจริง (Simulated Team)")
                                 
-                                # Display Captain
-                                cap_row = xi_df.sort_values("pred_points", ascending=False).iloc[0]
-                                vc_row = xi_df.sort_values("pred_points", ascending=False).iloc[1]
-                                st.success(f"👑 Captain (Simulated): **{cap_row['web_name']}** ({cap_row['team_short']}) | Vice: **{vc_row['web_name']}** ({vc_row['team_short']})")
+                                with tab_list_sim:
+                                    with st.container(border=False):
+                                        st.subheader("✅ 11 ตัวจริง (Simulated List View)")
+                                        xi_df_sim_list = xi_df_sim.copy()
+                                        xi_df_sim_list['pos'] = xi_df_sim_list['element_type'].map(POSITIONS)
+                                        position_order = ['GK', 'DEF', 'MID', 'FWD']
+                                        xi_df_sim_list['pos'] = pd.Categorical(xi_df_sim_list['pos'], categories=position_order, ordered=True)
+                                        xi_df_sim_list = xi_df_sim_list.sort_values('pos')
+                                        xi_display_df_sim = xi_df_sim_list[['web_name', 'team_short', 'pos', 'pred_points']]
+                                        display_user_friendly_table(
+                                            df=xi_display_df_sim,
+                                            title="", # Title handled by tab
+                                            height=420
+                                        )
+                                
+                                st.success(f"👑 Captain (Simulated): **{xi_df_sim.loc[cap_id_sim]['web_name']}** | Vice: **{xi_df_sim.loc[vc_id_sim]['web_name']}**")
                                 
                                 # Display Bench
                                 bench_df = sim_squad_df.loc[bench_ids_sim].copy()
@@ -1412,17 +1675,14 @@ def main():
                     st.markdown("---")
                     # --- END: NEW SIMULATION SECTION (MOVED) ---
 
-
             except requests.exceptions.HTTPError as e:
                 st.error(f"Could not fetch data for Team ID {entry_id_str}. Please check if the ID is correct. (Error: {e.response.status_code})")
                 st.session_state.analysis_submitted = False # Reset state
-            except (ValueError, TypeError):
-                st.error("Invalid Team ID. Please enter a numeric ID.")
-                st.session_state.analysis_submitted = False # Reset state
             except Exception as e:
-                st.error(f"An unexpected error occurred: {e}")
-                st.session_state.analysis_submitted = False # Reset state
-                st.exception(e)
+                # --- BUGFIX v1.5.1: Catch other processing errors ---
+                st.error(f"An unexpected error occurred while processing your team data: {e}")
+                st.session_state.analysis_submitted = False 
+                st.exception(e) # Print the full error for debugging
         else:
             # This handles the case where the button is 'submitted' but the text box is empty
             st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
