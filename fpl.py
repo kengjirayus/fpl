@@ -13,13 +13,13 @@ What it does
 
 How to run
 1) pip install streamlit pandas numpy scikit-learn pulp requests
-2) streamlit run fpl_with_images.py
+2) streamlit run fpl.py
 
 Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.5 - Add Images and Pitch View
+# V1.6.1 - Truly Aggressive "Allow Hit" AI
 ###############################
 
 import os
@@ -681,26 +681,45 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
     # Rank moves by expected points gain
     potential_moves.sort(key=lambda x: x.get("delta_points", 0.0), reverse=True)
 
-    # Final selection applying hits / free transfer logic
+    # --- START: v1.6.1 AGGRESSIVE AI LOGIC ---
     final_suggestions = []
-    total_hit_cost = 0.0
+    
+    # Define thresholds
+    GREEDY_THRESHOLD = -2.0  # Allow net loss of 2.0 pts (i.e., delta_points > 2.0 for a -4 hit)
+    CONSERVATIVE_THRESHOLD = -0.1 # Must almost break even (for Free Transfer)
+
     for i, move in enumerate(potential_moves):
         if len(final_suggestions) >= max_transfers:
             break
 
         hit = 0 if len(final_suggestions) < free_transfers else hit_cost
-        total_hit_cost += (hit if hit is not None else 0)
+        
+        # Calculate pure net gain (profit)
+        net_gain = move["delta_points"] - hit
 
-        net_gain = move["delta_points"] - (hit if hit is not None else 0)
-        # original code had some scaling for hit moves; keep it mild
-        if hit > 0:
-            net_gain = net_gain * 2.5 - total_hit_cost
+        # Create the move object
+        m = move.copy()
+        m['net_gain'] = round(net_gain, 2)
+        m['hit_cost'] = hit
 
-        if strategy == "Free Transfer" or net_gain > -0.1:
-            m = move.copy()
-            m['net_gain'] = round(net_gain, 2)
-            m['hit_cost'] = hit
-            final_suggestions.append(m)
+        # Apply strategy-based filtering
+        if strategy == "Free Transfer":
+            # Conservative: Only accept moves that don't cost points.
+            if net_gain >= CONSERVATIVE_THRESHOLD:
+                final_suggestions.append(m)
+        
+        elif strategy == "Allow Hit (AI Suggest)":
+            # Aggressive: Accept any move that doesn't lose us *too many* points.
+            if net_gain >= GREEDY_THRESHOLD:
+                final_suggestions.append(m)
+
+        elif strategy == "Wildcard / Free Hit":
+            # Wildcard: hit_cost is 0, so net_gain = delta_points.
+            # Accept all positive moves up to the max transfer limit (15).
+            if net_gain > 0.0:
+                final_suggestions.append(m)
+    
+    # --- END: v1.6.1 AGGRESSIVE AI LOGIC ---
 
     return final_suggestions
 
