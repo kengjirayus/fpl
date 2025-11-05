@@ -19,7 +19,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.6.1 - Truly Aggressive "Allow Hit" AI
+# V1.6.2 - Fixed Broadcast Error in suggest_transfers
 ###############################
 
 import os
@@ -612,8 +612,9 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
 
             # Fallback: try same-team replacements (if any)
             if best_replacement is None:
+                # --- BUGFIX v1.6.2: Filter all_replacements, not all_players ---
                 same_team_replacements = all_replacements[
-                    (all_players['team'] == out_team_id) &
+                    (all_replacements['team'] == out_team_id) &
                     (~all_replacements.index.isin(used_in_players))
                 ]
                 if not same_team_replacements.empty:
@@ -1711,4 +1712,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
