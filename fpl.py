@@ -7,19 +7,19 @@ What it does
 - Predicts next GW points with a hybrid approach
 - Optimizes your Starting XI & bench order
 - Suggests transfers based on selected strategy
-- Shows Top 50 table with player images
+- NEW: Revamped home page with Top 20, Value, Fixture, and Trend graphs
 - Displays Starting XI in a "Pitch View" or "List View"
 - Includes a "Simulation Mode" to manually edit your 15-man squad
 
 How to run
-1) pip install streamlit pandas numpy scikit-learn pulp requests
+1) pip install streamlit pandas numpy scikit-learn pulp requests altair
 2) streamlit run fpl.py
 
 Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.6.2 - Fixed Broadcast Error in suggest_transfers
+# V1.8.3 - Revert to 70px logos (fix AccessDenied)
 ###############################
 
 import os
@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+import altair as alt # <-- NEW IMPORT
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
@@ -372,14 +373,18 @@ def current_and_next_event(events: List[Dict]) -> Tuple[Optional[int], Optional[
         cur = next_ev - 1 if next_ev > 1 else 1
     return cur, next_ev
 
-TEAM_MAP_COLS = ["id","name","short_name","strength_overall_home","strength_overall_away",
-                 "strength_attack_home","strength_attack_away","strength_defence_home","strength_defence_away"]
+# --- BUGFIX v1.8.2: Add 'code' to the list of columns ---
+TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
+                 "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away"]
 
 def build_master_tables(bootstrap: Dict, fixtures: List[Dict]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Constructs the main dataframes for players, teams, events, and fixtures."""
     elements = pd.DataFrame(bootstrap["elements"])
     teams = pd.DataFrame(bootstrap["teams"])[TEAM_MAP_COLS]
     events = pd.DataFrame(bootstrap.get("events", []))
+    
+    # --- BUGFIX (v1.8.3): Use 70px logos, 280px is Access Denied ---
+    teams['logo_url'] = 'https://resources.premierleague.com/premierleague/badges/70/t' + teams['code'].astype(str) + '.png'
 
     elements = elements.merge(teams[["id","short_name"]], left_on="team", right_on="id", suffixes=("","_team"))
     elements.rename(columns={"short_name":"team_short"}, inplace=True)
@@ -926,35 +931,31 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
     st.markdown(html, unsafe_allow_html=True)
 
 ###############################
-# --- NEW: Top 50 Image Table Function ---
+# --- NEW: Home Dashboard Function (v1.8.0) ---
 ###############################
 
-def display_top_50_with_images(df: pd.DataFrame, title: str):
+def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame):
     """
-    Displays the Top 50 players using st.data_editor with images.
+    Displays the full home page dashboard (Top 20, Value, Fixtures, Trends).
     """
-    st.subheader(title)
     
-    # Prepare dataframe
-    df_display = df.copy()
-    df_display["pos"] = df_display["pos"].map(POSITIONS)
-    df_display["price"] = (df_display["price"] / 10.0)
+    # --- 1. Top 20 Players ---
+    st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
+    top_tbl = feat_df[["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]].copy()
+    top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
+    top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
+    top_tbl["price"] = (top_tbl["price"] / 10.0)
     
-    # Sort and get top 50
-    top_players = df_display.sort_values("pred_points", ascending=False).head(50)
+    top_players = top_tbl.sort_values("pred_points", ascending=False).head(20) # <-- Changed to 20
     
-    # Reset index to show 'No.'
     top_players.reset_index(drop=True, inplace=True)
     top_players.index = np.arange(1, len(top_players) + 1)
     top_players.index.name = "ลำดับ"
     
-    # Select columns for display
     cols_to_show = ["photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"]
-    top_players_display = top_players[cols_to_show]
-
-    # Use st.data_editor with column_config
+    
     st.data_editor(
-        top_players_display,
+        top_players[cols_to_show],
         column_config={
             "photo_url": st.column_config.ImageColumn(
                 "รูป", help="รูปนักเตะ", width="small"
@@ -983,9 +984,88 @@ def display_top_50_with_images(df: pd.DataFrame, title: str):
         },
         column_order=("ลำดับ", "photo_url", "web_name", "team_short", "pos", "price", "form", "fixture_ease", "pred_points"),
         use_container_width=True,
-        height=1800, # Height for ~50 players
+        height=750, # <-- Changed height for 20 players
         disabled=True # Read-only
     )
+    st.markdown("---")
+
+    # --- 2. Value Scatter Plot ---
+    st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
+    st.markdown("มองหานักเตะที่อยู่ **มุมบนซ้าย** (คะแนนสูง, ราคาถูก)")
+    value_df = feat_df[feat_df['pred_points'] > 2.0].copy() # Filter out duds
+    value_df['price'] = value_df['now_cost'] / 10.0
+    value_df['position'] = value_df['element_type'].map(POSITIONS)
+    
+    # --- NEW (v1.8.0): Use Altair chart for rich tooltips ---
+    chart = alt.Chart(value_df).mark_circle().encode(
+        x=alt.X('price', title='ราคา (£)'),
+        y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
+        color='position',
+        tooltip=['web_name', 'team_short', 'price', 'pred_points'] # Add name and team
+    ).interactive() # Make it zoomable/pannable
+    
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("หมายเหตุ: การแสดงรูปนักเตะใน tooltip ของกราฟนี้ยังไม่รองรับครับ")
+    st.markdown("---")
+
+    # --- 3. Fixture Difficulty ---
+    st.subheader("🗓️ ตารางแข่ง (Fixture Difficulty)")
+    col1, col2 = st.columns(2)
+    
+    # Merge nf with team names AND LOGOS
+    nf_with_names = nf_df.merge(teams_df[['id', 'short_name', 'logo_url']], left_on='team', right_on='id')
+    
+    with col1:
+        st.markdown("#### ✅ 5 ทีมที่ตารางแข่งง่ายที่สุด (น่าซื้อ)")
+        easy_fixtures = nf_with_names[nf_with_names['num_fixtures'] > 0].nlargest(5, 'avg_fixture_ease')
+        
+        for _, row in easy_fixtures.iterrows():
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                st.image(row['logo_url'], width=40)
+            with c2:
+                st.markdown(f"**{row['short_name']}**")
+                st.markdown(f"คะแนนความง่าย: **{row['avg_fixture_ease']:.2f}**")
+        
+    with col2:
+        st.markdown("#### ❌ 5 ทีมที่ตารางแข่งยากที่สุด (น่าขาย)")
+        hard_fixtures = nf_with_names[nf_with_names['num_fixtures'] > 0].nsmallest(5, 'avg_fixture_ease')
+
+        for _, row in hard_fixtures.iterrows():
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                st.image(row['logo_url'], width=40)
+            with c2:
+                st.markdown(f"**{row['short_name']}**")
+                st.markdown(f"คะแนนความง่าย: **{row['avg_fixture_ease']:.2f}**")
+    st.markdown("---")
+    
+    # --- 4. Player Trends ---
+    st.subheader("🔥 นักเตะน่าสนใจ (Player Trends)")
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        st.markdown("#### 🔥 Top 5 นักเตะฟอร์มแรง (Form)")
+        on_fire = feat_df.nlargest(5, 'form')
+        for _, row in on_fire.iterrows():
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                st.image(row['photo_url'], width=50)
+            with c2:
+                st.markdown(f"**{row['web_name']}** ({row['team_short']})")
+                st.markdown(f"คะแนนฟอร์ม: **{row['form']:.1f}**")
+
+        
+    with col4:
+        st.markdown("#### 👥 Top 5 ขวัญใจมหาชน (Most Owned)")
+        most_owned = feat_df.nlargest(5, 'selected_by_percent')
+        for _, row in most_owned.iterrows():
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                st.image(row['photo_url'], width=50)
+            with c2:
+                st.markdown(f"**{row['web_name']}** ({row['team_short']})")
+                st.markdown(f"% คนเลือก: **{row['selected_by_percent']:.1f}%**")
 
 
 ###############################
@@ -1156,22 +1236,18 @@ def main():
 
     # --- BUGFIX: Change main logic to check session state ---
     if not st.session_state.get('analysis_submitted', False):
-        # Create the table for top players
-        show_cols = ["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]
-        top_tbl = feat[show_cols].copy()
+        
         try:
-            # --- NEW: Use st.data_editor for Top 50 ---
-            top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
-            display_top_50_with_images(
-                df=top_tbl,
-                title="⭐ นักเตะที่คาดว่าจะทำคะแนนได้สูงสุด (Top 50 Projected Players)"
-            )
+            # --- NEW: Display the full home dashboard (v1.7.0) ---
+            st.header(f"ภาพรวมสัปดาห์ที่ {target_event} (GW{target_event} Overview)")
+            display_home_dashboard(feat, nf, teams)
         
         except Exception as e:
-            st.error(f"Error creating top players table: {e}")
+            st.error(f"Error creating home dashboard: {e}")
             st.exception(e) # Show full error
         
         # Show landing page info only if not submitted
+        st.markdown("---")
         st.error("❗กรุณากรอก FPL Team ID ของคุณในช่องด้านข้างเพื่อเริ่มการวิเคราะห์")
         st.info("💡 FPL Team ID จากเว็บไซต์ https://fantasy.premierleague.com/ คลิกที่ Points แล้วจะเห็น Team ID ตามตัวอย่างรูปด้านล่าง")
         st.markdown(
