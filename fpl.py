@@ -7,7 +7,7 @@ What it does
 - Predicts next GW points with a hybrid approach
 - Optimizes your Starting XI & bench order
 - Suggests transfers based on selected strategy
-- NEW: Revamped home page with Top 20, Value, Fixture, and Trend graphs
+- **NEW**: Home Dashboard v1.9 (DGW/BGW, Captains, Differentials)
 - Displays Starting XI in a "Pitch View" or "List View"
 - Includes a "Simulation Mode" to manually edit your 15-man squad
 
@@ -19,7 +19,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.8.3 - Revert to 70px logos (fix AccessDenied)
+# V1.9.0 - New Dashboard Features
 ###############################
 
 import os
@@ -399,6 +399,9 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
     rows = []
     # Use a dictionary to handle multiple fixtures for a single team (DGW)
     team_data = {team_id: {'home_fixtures': [], 'away_fixtures': []} for team_id in teams_df['id'].unique()}
+    
+    # --- NEW (v1.9.0): Pre-index teams for faster lookup ---
+    teams_idx = teams_df.set_index('id')
 
     for _, row in next_gw_fixtures.iterrows():
         home_team_id, away_team_id = row['team_h'], row['team_a']
@@ -411,25 +414,35 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
         
         num_fixtures = len(home_opps) + len(away_opps)
         
+        # --- NEW (v1.9.0): Opponent String Logic ---
+        opp_list = []
+        for opp_id in home_opps:
+            opp_list.append(f"{teams_idx.loc[opp_id, 'short_name']} (H)")
+        for opp_id in away_opps:
+            opp_list.append(f"{teams_idx.loc[opp_id, 'short_name']} (A)")
+        
         # Blank Gameweek (BGW)
         if num_fixtures == 0:
+            opponent_str = "BLANK"
             rows.append({
                 'team': team_id,
                 'num_fixtures': 0,
                 'total_opp_def_str': 0,
-                'avg_fixture_ease': 0
+                'avg_fixture_ease': 0,
+                'opponent_str': opponent_str
             })
             continue
 
         # Double Gameweek (DGW) or single GW
+        opponent_str = ", ".join(opp_list)
         total_opp_def_str = 0
         total_opp_att_str = 0
         for opp_id in home_opps:
-            opp_team = teams_df.set_index('id').loc[opp_id]
+            opp_team = teams_idx.loc[opp_id]
             total_opp_def_str += opp_team['strength_defence_away']
             total_opp_att_str += opp_team['strength_attack_away']
         for opp_id in away_opps:
-            opp_team = teams_df.set_index('id').loc[opp_id]
+            opp_team = teams_idx.loc[opp_id]
             total_opp_def_str += opp_team['strength_defence_home']
             total_opp_att_str += opp_team['strength_attack_home']
 
@@ -437,7 +450,8 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
             'team': team_id,
             'num_fixtures': num_fixtures,
             'total_opp_def_str': total_opp_def_str,
-            'avg_fixture_ease': 1.0 - (total_opp_def_str / (num_fixtures * teams_df['strength_defence_home'].max()))
+            'avg_fixture_ease': 1.0 - (total_opp_def_str / (num_fixtures * teams_idx['strength_defence_home'].max())),
+            'opponent_str': opponent_str
         })
 
     df = pd.DataFrame(rows)
@@ -451,6 +465,8 @@ def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFr
     elements = elements.merge(nf, on="team", how="left")
     elements['num_fixtures'] = elements['num_fixtures'].fillna(0).astype(int)
     elements['avg_fixture_ease'] = elements['avg_fixture_ease'].fillna(0)
+    # --- NEW (v1.9.0): Carry over opponent string ---
+    elements['opponent_str'] = elements['opponent_str'].fillna("Error")
 
     for col in ["form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts", "code"]:
         elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
@@ -931,15 +947,58 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
     st.markdown(html, unsafe_allow_html=True)
 
 ###############################
-# --- NEW: Home Dashboard Function (v1.8.0) ---
+# --- NEW: Home Dashboard Function (v1.9.0) ---
 ###############################
 
 def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame):
     """
-    Displays the full home page dashboard (Top 20, Value, Fixtures, Trends).
+    Displays the full home page dashboard (DGW/BGW, Captains, Top 20, Value, Fixtures, Trends).
     """
     
-    # --- 1. Top 20 Players ---
+    # --- 1. DGW/BGW Tracker (Conditional) ---
+    dgw_teams = nf_df[nf_df['num_fixtures'] == 2]
+    bgw_teams = nf_df[nf_df['num_fixtures'] == 0]
+
+    if not dgw_teams.empty or not bgw_teams.empty:
+        st.subheader("🚨 สรุปทีม DGW / BGW")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 🟩 Double Gameweek (น่าซื้อ)")
+            if dgw_teams.empty:
+                st.caption("ไม่มีทีม Double Gameweek")
+            else:
+                dgw_teams_merged = dgw_teams.merge(teams_df[['id', 'short_name', 'logo_url']], left_on='team', right_on='id')
+                for _, row in dgw_teams_merged.iterrows():
+                    c1, c2 = st.columns([1, 4])
+                    with c1: st.image(row['logo_url'], width=40)
+                    with c2: st.markdown(f"**{row['short_name']}**"); st.caption(f"{row['opponent_str']}")
+        
+        with col2:
+            st.markdown("#### 🟥 Blank Gameweek (น่าขาย)")
+            if bgw_teams.empty:
+                st.caption("ไม่มีทีม Blank Gameweek")
+            else:
+                bgw_teams_merged = bgw_teams.merge(teams_df[['id', 'short_name', 'logo_url']], left_on='team', right_on='id')
+                for _, row in bgw_teams_merged.iterrows():
+                    c1, c2 = st.columns([1, 4])
+                    with c1: st.image(row['logo_url'], width=40)
+                    with c2: st.markdown(f"**{row['short_name']}**"); st.caption("ไม่มีนัดแข่ง")
+        st.markdown("---")
+
+    # --- 2. Captaincy Corner ---
+    st.subheader("👑 5 สุดยอดกัปตัน (Captaincy Corner)")
+    captains = feat_df.nlargest(5, 'pred_points')
+    for _, row in captains.iterrows():
+        c1, c2 = st.columns([1, 4])
+        with c1:
+            st.image(row['photo_url'], width=60)
+        with c2:
+            st.markdown(f"**{row['web_name']}** ({row['team_short']})")
+            st.markdown(f"**คะแนนคาดการณ์: {row['pred_points']:.1f}**")
+            st.caption(f"คู่แข่ง: {row['opponent_str']} | ฟอร์ม: {row['form']:.1f}")
+    st.markdown("---")
+
+    # --- 3. Top 20 Players ---
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
     top_tbl = feat_df[["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]].copy()
     top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
@@ -989,14 +1048,13 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     )
     st.markdown("---")
 
-    # --- 2. Value Scatter Plot ---
+    # --- 4. Value Scatter Plot ---
     st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
     st.markdown("มองหานักเตะที่อยู่ **มุมบนซ้าย** (คะแนนสูง, ราคาถูก)")
     value_df = feat_df[feat_df['pred_points'] > 2.0].copy() # Filter out duds
     value_df['price'] = value_df['now_cost'] / 10.0
     value_df['position'] = value_df['element_type'].map(POSITIONS)
     
-    # --- NEW (v1.8.0): Use Altair chart for rich tooltips ---
     chart = alt.Chart(value_df).mark_circle().encode(
         x=alt.X('price', title='ราคา (£)'),
         y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
@@ -1008,7 +1066,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.caption("หมายเหตุ: การแสดงรูปนักเตะใน tooltip ของกราฟนี้ยังไม่รองรับครับ")
     st.markdown("---")
 
-    # --- 3. Fixture Difficulty ---
+    # --- 5. Fixture Difficulty ---
     st.subheader("🗓️ ตารางแข่ง (Fixture Difficulty)")
     col1, col2 = st.columns(2)
     
@@ -1040,32 +1098,33 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                 st.markdown(f"คะแนนความง่าย: **{row['avg_fixture_ease']:.2f}**")
     st.markdown("---")
     
-    # --- 4. Player Trends ---
+    # --- 6. Player Trends (Now 3 columns) ---
     st.subheader("🔥 นักเตะน่าสนใจ (Player Trends)")
-    col3, col4 = st.columns(2)
+    col1, col2, col3 = st.columns(3) # <-- Changed to 3
     
-    with col3:
-        st.markdown("#### 🔥 Top 5 นักเตะฟอร์มแรง (Form)")
+    with col1:
+        st.markdown("#### 🔥 Top 5 ฟอร์มแรง (Form)")
         on_fire = feat_df.nlargest(5, 'form')
         for _, row in on_fire.iterrows():
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                st.image(row['photo_url'], width=50)
-            with c2:
-                st.markdown(f"**{row['web_name']}** ({row['team_short']})")
-                st.markdown(f"คะแนนฟอร์ม: **{row['form']:.1f}**")
+            c1, c2 = st.columns([1, 3])
+            with c1: st.image(row['photo_url'], width=50)
+            with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"ฟอร์ม: {row['form']:.1f}")
+    
+    with col2:
+        st.markdown("#### 💎 Top 5 ตัวแรร์ (<10% Owned)")
+        diffs = feat_df[feat_df['selected_by_percent'] < 10.0].nlargest(5, 'pred_points')
+        for _, row in diffs.iterrows():
+            c1, c2 = st.columns([1, 3])
+            with c1: st.image(row['photo_url'], width=50)
+            with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คะแนน: {row['pred_points']:.1f} | คนมี: {row['selected_by_percent']:.1f}%")
 
-        
-    with col4:
+    with col3:
         st.markdown("#### 👥 Top 5 ขวัญใจมหาชน (Most Owned)")
         most_owned = feat_df.nlargest(5, 'selected_by_percent')
         for _, row in most_owned.iterrows():
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                st.image(row['photo_url'], width=50)
-            with c2:
-                st.markdown(f"**{row['web_name']}** ({row['team_short']})")
-                st.markdown(f"% คนเลือก: **{row['selected_by_percent']:.1f}%**")
+            c1, c2 = st.columns([1, 3])
+            with c1: st.image(row['photo_url'], width=50)
+            with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คนมี: {row['selected_by_percent']:.1f}%")
 
 
 ###############################
@@ -1197,25 +1256,11 @@ def main():
 
     st.info(f"📅 สัปดาห์ที่: **{cur_event}** | วิเคราะห์เกมสัปดาห์ที่: **{target_event}**{deadline_text}")
 
-    # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW ---
+    # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW (ย้ายมาตรงนี้เพื่อให้ข้อมูล 'nf' พร้อมใช้) ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
-    dgw_teams = nf[nf['num_fixtures'] == 2]['team'].map(teams.set_index('id')['short_name'])
-    bgw_teams = nf[nf['num_fixtures'] == 0]['team'].map(teams.set_index('id')['short_name'])
-
-    dgw_note = ""
-    bgw_note = ""
-    if not dgw_teams.empty:
-        dgw_note = f"สัปดาห์นี้มี Double Gameweek: **{', '.join(dgw_teams)}**"
-    if not bgw_teams.empty:
-        bgw_note = f"สัปดาห์นี้มี Blank Gameweek: **{', '.join(bgw_teams)}**"
     
-    if dgw_note and bgw_note:
-        st.info(f"💡 {dgw_note}. {bgw_note}")
-    elif dgw_note:
-        st.info(f"💡 {dgw_note}")
-    elif bgw_note:
-        st.info(f"💡 {bgw_note}")
-    # ----------------------------------------------------
+    # (ย้าย dgw_note / bgw_note ไปอยู่ใน display_home_dashboard)
+
     feat = engineer_features(elements, teams, nf)
     feat.set_index('id', inplace=True)
     feat["pred_points"] = feat["pred_points_heur"]
@@ -1238,7 +1283,7 @@ def main():
     if not st.session_state.get('analysis_submitted', False):
         
         try:
-            # --- NEW: Display the full home dashboard (v1.7.0) ---
+            # --- NEW: Display the full home dashboard (v1.9.0) ---
             st.header(f"ภาพรวมสัปดาห์ที่ {target_event} (GW{target_event} Overview)")
             display_home_dashboard(feat, nf, teams)
         
