@@ -7,7 +7,7 @@ What it does
 - Predicts next GW points with a hybrid approach
 - Optimizes your Starting XI & bench order
 - Suggests transfers based on selected strategy
-- **NEW**: Home Dashboard v1.9.5 (3-Col: Captains, Price Risers, Price Fallers)
+- **NEW**: Home Dashboard v1.9.6 (Added image fallbacks for missing player photos)
 - **NEW**: Visual Fixture Planner with Logos (v1.9.3)
 - Displays Starting XI in a "Pitch View" or "List View"
 - Includes a "Simulation Mode" to manually edit your 15-man squad
@@ -20,7 +20,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.9.5 - Adjusted Home Dashboard Layout
+# V1.9.6 - Added Image Fallback
 ###############################
 
 import os
@@ -1044,6 +1044,9 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
     defs = team_df[team_df['pos'] == 'DEF'].sort_values('pred_points', ascending=False)
     mids = team_df[team_df['pos'] == 'MID'].sort_values('pred_points', ascending=False)
     fwds = team_df[team_df['pos'] == 'FWD'].sort_values('pred_points', ascending=False)
+    
+    # --- NEW (v1.9.6): Add placeholder URL ---
+    DEFAULT_PHOTO_URL_PITCH = "https://resources.premierleague.com/premierleague/photos/players/110x140/p-blank.png"
 
     def generate_player_html(player_row):
         # Add captain/vice-captain logic
@@ -1053,8 +1056,8 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
         elif player_row.get('is_vice_captain', False):
             name = f"{name} (V)"
             
-        # --- BUGFIX v1.5.5: Use outer DOUBLE quotes, inner SINGLE quotes ---
-        return f"<div class='player-card'><img src='{player_row['photo_url']}' alt='{player_row['web_name']}'><div class='player-name'>{name}</div><div class='player-info'>{player_row['team_short']} | {player_row['pred_points']:.1f}pts</div></div>"
+        # --- MODIFIED (v1.9.6): Added onerror attribute ---
+        return f"<div class='player-card'><img src='{player_row['photo_url']}' alt='{player_row['web_name']}' onerror=\"this.onerror=null;this.src='{DEFAULT_PHOTO_URL_PITCH}';\"><div class='player-name'>{name}</div><div class='player-info'>{player_row['team_short']} | {player_row['pred_points']:.1f}pts</div></div>"
 
     # Build HTML string
     html = f"{pitch_css}<div class='pitch-container'>"
@@ -1242,6 +1245,16 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     Displays the full home page dashboard (DGW/BGW, Captains, Top 20, Value, Fixtures, Trends).
     """
     
+    # --- NEW (v1.9.6): Add placeholder URL and helper function ---
+    DEFAULT_PHOTO_URL = "https://resources.premierleague.com/premierleague/photos/players/110x140/p-blank.png"
+
+    def get_player_image_html(photo_url, player_name, width=60):
+        """Generates an HTML img tag with a fallback placeholder."""
+        # Use HTML entities for quotes inside the onerror attribute
+        alt_text = player_name.replace("'", "").replace('"', '')
+        return f'<img src="{photo_url}" alt="{alt_text}" width="{width}" style="border-radius: 4px; min-height: {int(width*1.33)}px; background-color: #eee;" onerror="this.onerror=null;this.src=\'{DEFAULT_PHOTO_URL}\';">'
+
+    
     # --- 1. DGW/BGW Tracker (Conditional) ---
     dgw_teams = nf_df[nf_df['num_fixtures'] == 2]
     bgw_teams = nf_df[nf_df['num_fixtures'] == 0]
@@ -1284,7 +1297,8 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
             for _, row in captains.iterrows():
                 c1, c2 = st.columns([1, 4])
                 with c1:
-                    st.image(row['photo_url'], width=60)
+                    # --- MODIFIED (v1.9.6): Use HTML fallback ---
+                    st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 60), unsafe_allow_html=True)
                 with c2:
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
                     st.markdown(f"**คะแนน: {row['pred_points']:.1f}**")
@@ -1300,7 +1314,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         else:
             for _, row in risers.iterrows():
                 c1, c2 = st.columns([1, 4])
-                with c1: st.image(row['photo_url'], width=60)
+                with c1: 
+                    # --- MODIFIED (v1.9.6): Use HTML fallback ---
+                    st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 60), unsafe_allow_html=True)
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
                     st.caption(f"▲ ราคาขึ้น: £{row['cost_change_event']/10.0:.1f}m")
@@ -1315,7 +1331,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         else:
             for _, row in fallers.iterrows():
                 c1, c2 = st.columns([1, 4])
-                with c1: st.image(row['photo_url'], width=60)
+                with c1: 
+                    # --- MODIFIED (v1.9.6): Use HTML fallback ---
+                    st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 60), unsafe_allow_html=True)
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
                     st.caption(f"▼ ราคาลง: £{row['cost_change_event']/10.0:.1f}m")
@@ -1324,6 +1342,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
 
     # --- 3. Top 20 Players ---
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
+    st.caption("หมายเหตุ: ตารางนี้อาจยังแสดงไอคอนรูปเสีย 🖼️ หากไม่มีรูปใน API ครับ")
     top_tbl = feat_df[["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]].copy()
     top_tbl.rename(columns={"element_type": "pos", "now_cost": "price", "avg_fixture_ease": "fixture_ease"}, inplace=True)
     top_tbl["pos"] = top_tbl["pos"].map(POSITIONS)
@@ -1392,13 +1411,12 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
 
     # --- 5. Fixture Difficulty ---
     st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
-    st.markdown("เรียงตามลำดับง่าย ➡ ยาก (สีเขียว = ง่าย, สีแดง = ยาก)")
     
     # --- NEW (v1.9.3): Display Visual HTML Heatmap ---
     display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
     
     # Display Rotation Pairs
-    st.markdown("#### 🥅 Top 5 คู่ผู้รักษาประตู (GK Rotation Pairs)")
+    st.markdown("#### 🔄 Top 5 คู่ผู้รักษาประตู (GK Rotation Pairs)")
     st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
     st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
     st.markdown("---")
@@ -1412,7 +1430,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         on_fire = feat_df.nlargest(5, 'form')
         for _, row in on_fire.iterrows():
             c1, c2 = st.columns([1, 3])
-            with c1: st.image(row['photo_url'], width=50)
+            with c1: 
+                # --- MODIFIED (v1.9.6): Use HTML fallback ---
+                st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 50), unsafe_allow_html=True)
             with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"ฟอร์ม: {row['form']:.1f}")
     
     with col2:
@@ -1420,7 +1440,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         diffs = feat_df[feat_df['selected_by_percent'] < 10.0].nlargest(5, 'pred_points')
         for _, row in diffs.iterrows():
             c1, c2 = st.columns([1, 3])
-            with c1: st.image(row['photo_url'], width=50)
+            with c1: 
+                # --- MODIFIED (v1.9.6): Use HTML fallback ---
+                st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 50), unsafe_allow_html=True)
             with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คะแนน: {row['pred_points']:.1f} | คนมี: {row['selected_by_percent']:.1f}%")
 
     with col3:
@@ -1428,7 +1450,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
         most_owned = feat_df.nlargest(5, 'selected_by_percent')
         for _, row in most_owned.iterrows():
             c1, c2 = st.columns([1, 3])
-            with c1: st.image(row['photo_url'], width=50)
+            with c1: 
+                # --- MODIFIED (v1.9.6): Use HTML fallback ---
+                st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 50), unsafe_allow_html=True)
             with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คนมี: {row['selected_by_percent']:.1f}%")
 
 
