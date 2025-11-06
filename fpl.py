@@ -7,7 +7,8 @@ What it does
 - Predicts next GW points with a hybrid approach
 - Optimizes your Starting XI & bench order
 - Suggests transfers based on selected strategy
-- **NEW**: Home Dashboard v1.9 (DGW/BGW, Captains, Differentials)
+- **NEW**: Home Dashboard v1.9.5 (3-Col: Captains, Price Risers, Price Fallers)
+- **NEW**: Visual Fixture Planner with Logos (v1.9.3)
 - Displays Starting XI in a "Pitch View" or "List View"
 - Includes a "Simulation Mode" to manually edit your 15-man squad
 
@@ -19,7 +20,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.9.0 - New Dashboard Features
+# V1.9.5 - Adjusted Home Dashboard Layout
 ###############################
 
 import os
@@ -377,6 +378,10 @@ def current_and_next_event(events: List[Dict]) -> Tuple[Optional[int], Optional[
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
                  "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away"]
 
+# --- BUGFIX v1.9.1: Define POSITIONS globally ---
+POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
 def build_master_tables(bootstrap: Dict, fixtures: List[Dict]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Constructs the main dataframes for players, teams, events, and fixtures."""
     elements = pd.DataFrame(bootstrap["elements"])
@@ -468,8 +473,14 @@ def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFr
     # --- NEW (v1.9.0): Carry over opponent string ---
     elements['opponent_str'] = elements['opponent_str'].fillna("Error")
 
-    for col in ["form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts", "code"]:
-        elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
+    # --- NEW (v1.9.4): Ensure price/transfer columns are numeric ---
+    cols_to_process = [
+        "form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts", "code",
+        "cost_change_event", "transfers_in_event", "transfers_out_event"
+    ]
+    for col in cols_to_process:
+        if col in elements.columns:
+            elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
     
     # --- NEW: Add photo_url ---
     elements['photo_url'] = 'https://resources.premierleague.com/premierleague/photos/players/110x140/p' + elements['code'].astype(int).astype(str) + '.png'
@@ -496,11 +507,141 @@ def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFr
 
     return elements
 
+# --- START: NEW FIXTURE PLANNER FUNCTIONS (v1.9.0) ---
+
+@st.cache_data(ttl=300)
+def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, current_event: int, lookahead: int = 5):
+    """
+    Creates a 5-gameweek difficulty matrix for all 20 teams.
+    """
+    team_names = teams_df.set_index('id')['short_name'].to_dict() # Use to_dict() for mapping
+    team_strength = teams_df.set_index('id')
+
+    # Get all fixtures for the next 'lookahead' gameweeks
+    future_gws = list(range(current_event, min(current_event + lookahead, 39)))
+    future_fixtures = fixtures_df[fixtures_df['event'].isin(future_gws)]
+    
+    # Create dictionaries to store opponent and difficulty data
+    opp_data = {team_id: {} for team_id in teams_df['id']}
+    diff_data = {team_id: {} for team_id in teams_df['id']}
+
+    for gw in future_gws:
+        gw_fixtures = future_fixtures[future_fixtures['event'] == gw]
+        teams_with_fixtures = set(gw_fixtures['team_h']).union(set(gw_fixtures['team_a']))
+
+        for team_id in teams_df['id']:
+            if team_id not in teams_with_fixtures:
+                # Blank Gameweek (BGW)
+                opp_data[team_id][f'GW{gw}'] = "BLANK"
+                diff_data[team_id][f'GW{gw}'] = 0 # Neutral difficulty for BGW
+                continue
+
+            # Get fixtures for this team
+            home_games = gw_fixtures[gw_fixtures['team_h'] == team_id]
+            away_games = gw_fixtures[gw_fixtures['team_a'] == team_id]
+
+            opponents = []
+            difficulties = []
+            
+            for _, game in home_games.iterrows():
+                opp_id = game['team_a']
+                opponents.append(f"{team_names.get(opp_id, '?')} (H)")
+                # Difficulty: Opponent's away strength
+                diff = team_strength.loc[opp_id, 'strength_overall_away']
+                difficulties.append(diff)
+
+            for _, game in away_games.iterrows():
+                opp_id = game['team_h']
+                opponents.append(f"{team_names.get(opp_id, '?')} (A)")
+                # Difficulty: Opponent's home strength
+                diff = team_strength.loc[opp_id, 'strength_overall_home']
+                difficulties.append(diff)
+            
+            # Store data (handles DGW by joining strings/averaging difficulty)
+            opp_data[team_id][f'GW{gw}'] = ", ".join(opponents)
+            diff_data[team_id][f'GW{gw}'] = np.mean(difficulties) if difficulties else 0
+
+    # Create DataFrames
+    # --- BUGFIX v1.9.0: Use .applymap, not .map ---
+    # We must use .map here because team_names is a dict. applymap is for functions.
+    # Ah, the error is because we need to map the *index* not the *dataframe*
+    opp_df = pd.DataFrame(opp_data).T
+    diff_df = pd.DataFrame(diff_data).T.fillna(0) # Fill BGW NaNs
+    
+    # Add team names as index
+    opp_df.index = opp_df.index.map(team_names)
+    diff_df.index = diff_df.index.map(team_names)
+    
+    # Sort by total difficulty (easiest first)
+    diff_df['Total'] = diff_df.sum(axis=1)
+    diff_df = diff_df.sort_values('Total', ascending=True)
+    opp_df = opp_df.loc[diff_df.index] # Match order
+
+    return opp_df, diff_df
+
+# --- DELETED (v1.9.3): Removed redundant get_difficulty_css_class from v1.9.0 ---
+
+# --- DELETED (v1.9.3): Removed redundant display_visual_fixture_planner from v1.9.0 ---
+
+@st.cache_data(ttl=300)
+def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame, all_players: pd.DataFrame, budget: float = 9.0):
+    """
+    Finds the best GK rotation pairs within a budget for the next 5 GWs.
+    """
+    gks = all_players[all_players['element_type'] == 1].copy()
+    gks['price'] = gks['now_cost'] / 10.0
+    gks['team_short'] = gks['team'].map(teams_df.set_index('id')['short_name'])
+
+    cheap_gks = gks[gks['price'] <= (budget - 4.0)] # Must be <= (budget - cheapest GK)
+    
+    pairs = []
+    checked_pairs = set()
+
+    for i, gk1 in cheap_gks.iterrows():
+        for j, gk2 in cheap_gks.iterrows():
+            if i >= j or (gk2['team'], gk1['team']) in checked_pairs:
+                continue
+            
+            # Check budget
+            if (gk1['price'] + gk2['price']) > budget:
+                continue
+                
+            checked_pairs.add((gk1['team'], gk2['team']))
+            
+            # Get difficulty rows for these two teams
+            try:
+                diff1 = difficulty_matrix.loc[gk1['team_short']]
+                diff2 = difficulty_matrix.loc[gk2['team_short']]
+            except KeyError:
+                continue # Skip if team not in matrix
+
+            # Calculate rotation score (minimum difficulty for each GW)
+            rotation_score = 0
+            for col in difficulty_matrix.columns:
+                if col == 'Total': continue
+                rotation_score += min(diff1[col], diff2[col])
+            
+            pairs.append({
+                'GK1': f"{gk1['web_name']} ({gk1['price']:.1f}m)",
+                'GK2': f"{gk2['web_name']} ({gk2['price']:.1f}m)",
+                'Total Cost': gk1['price'] + gk2['price'],
+                'Rotation Score': rotation_score
+            })
+
+    if not pairs:
+        return pd.DataFrame(columns=['GK1', 'GK2', 'Total Cost', 'Rotation Score'])
+        
+    pairs_df = pd.DataFrame(pairs).sort_values('Rotation Score', ascending=True).head(5)
+    pairs_df['Total Cost'] = pairs_df['Total Cost'].apply(lambda x: f"£{x:.1f}m")
+    pairs_df['Rotation Score'] = pairs_df['Rotation Score'].apply(lambda x: f"{x:.1f}")
+    return pairs_df.reset_index(drop=True)
+
+# --- END: NEW FIXTURE PLANNER FUNCTIONS ---
+
+
 ###############################
 # Squad & optimization
 ###############################
-
-POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
 def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], List[int]]:
     """Return (start_ids, bench_ids) maximizing predicted points subject to FPL formation."""
@@ -947,10 +1088,156 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
     st.markdown(html, unsafe_allow_html=True)
 
 ###############################
+# --- NEW: Visual Fixture Planner (v1.9.3) ---
+###############################
+
+def get_difficulty_css_class(val, min_val, max_val):
+    """Returns the CSS class based on the difficulty score."""
+    if val == 0: # BGW
+        return "bg-blank" # Dark grey
+    
+    # Normalize from 0 (easy) to 1 (hard)
+    norm_val = (val - min_val) / (max_val - min_val) if (max_val - min_val) > 0 else 0.5
+    
+    if norm_val < 0.33:
+        # Easy (Green) - เขียวสด
+        return "bg-easy"
+    elif norm_val < 0.66:
+        # Medium (Orange) - สีส้ม
+        return "bg-medium"
+    else:
+        # Hard (Red) - แดง
+        return "bg-hard"
+
+def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.DataFrame, teams_df: pd.DataFrame):
+    """
+    Displays the Fixture Planner as a visual HTML table with logos and colors.
+    """
+    
+    # Create lookup dict for team logos
+    team_logo_lookup = teams_df.set_index('short_name')['logo_url'].to_dict()
+    
+    # Get GW columns
+    gw_cols = [col for col in diff_matrix.columns if col.startswith('GW')]
+    
+    # Calculate min/max for coloring (excluding BGWs and Total)
+    non_zero_vals = diff_matrix[gw_cols][diff_matrix[gw_cols] != 0].unstack().dropna()
+    min_val = non_zero_vals.min()
+    max_val = non_zero_vals.max()
+
+    # --- Start building HTML string ---
+    html = """
+    <style>
+        .fixture-planner {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Inter', sans-serif;
+            border-radius: 8px;
+            overflow: hidden; /* For border-radius */
+        }
+        .fixture-planner th, .fixture-planner td {
+            text-align: center;
+            padding: 8px 4px;
+            border: 1px solid #444;
+            min-width: 65px;
+        }
+        .fixture-planner th {
+            background-color: #333;
+            color: white;
+            font-size: 14px;
+        }
+        .team-cell {
+            width: 70px;
+            background-color: #f0f2f6;
+            padding: 4px;
+        }
+        .team-cell img {
+            width: 35px;
+            height: 35px;
+        }
+        .team-cell span {
+            display: block;
+            font-size: 13px;
+            font-weight: bold;
+            color: #333;
+            margin-top: 2px;
+        }
+        .fixture-cell {
+            vertical-align: middle;
+            font-size: 13px;
+            font-weight: bold;
+            width: 70px;
+            height: 60px;
+        }
+        .fixture-cell img {
+            width: 25px;
+            height: 25px;
+            vertical-align: middle;
+        }
+        /* Color classes from user request (UPDATED) */
+        .bg-easy { background-color: #00C232; color: black; }
+        .bg-medium { background-color: #E37619; color: black; }
+        .bg-hard { background-color: #FF0000; color: white; }
+        .bg-blank { background-color: #373737; color: white; }
+        .dgw-cell { 
+            font-size: 12px; 
+            line-height: 1.4;
+            text-align: left;
+            padding-left: 8px;
+        }
+    </style>
+    <table class="fixture-planner">
+        <thead>
+            <tr>
+                <th>Team</th>
+    """
+    
+    # Add GW Headers
+    for gw in gw_cols:
+        html += f"<th>{gw}</th>"
+    html += "</tr></thead><tbody>"
+
+    # Add Team Rows
+    for team_short_name, diff_row in diff_matrix.drop(columns=['Total']).iterrows():
+        team_logo_url = team_logo_lookup.get(team_short_name, '')
+        html += "<tr>"
+        # Column 1: Team Logo & Name
+        html += f"<td class='team-cell'><img src='{team_logo_url}' alt='{team_short_name}'><br><span>{team_short_name}</span></td>"
+        
+        # Columns 2-6: Fixtures
+        for gw in gw_cols:
+            diff_score = diff_row[gw]
+            opp_string = opp_matrix.loc[team_short_name, gw]
+            css_class = get_difficulty_css_class(diff_score, min_val, max_val)
+            
+            cell_content = ""
+            if opp_string == "BLANK":
+                cell_content = "BLANK"
+            elif "," in opp_string:
+                # Double Gameweek
+                cell_content = opp_string.replace(", ", "<br>")
+                css_class = "dgw-cell " + css_class # Add DGW style
+            else:
+                # Single Gameweek
+                opp_short_name = opp_string.split(" ")[0]
+                home_away = opp_string.split(" ")[1]
+                opp_logo_url = team_logo_lookup.get(opp_short_name, '')
+                cell_content = f"<img src='{opp_logo_url}' alt='{opp_short_name}'><br>{home_away}"
+
+            html += f"<td class='fixture-cell {css_class}'>{cell_content}</td>"
+        
+        html += "</tr>"
+
+    html += "</tbody></table>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+###############################
 # --- NEW: Home Dashboard Function (v1.9.0) ---
 ###############################
 
-def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame):
+def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame, 
+                           opp_matrix: pd.DataFrame, diff_matrix: pd.DataFrame, rotation_pairs: pd.DataFrame):
     """
     Displays the full home page dashboard (DGW/BGW, Captains, Top 20, Value, Fixtures, Trends).
     """
@@ -985,17 +1272,54 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                     with c2: st.markdown(f"**{row['short_name']}**"); st.caption("ไม่มีนัดแข่ง")
         st.markdown("---")
 
-    # --- 2. Captaincy Corner ---
-    st.subheader("👑 5 สุดยอดกัปตัน (Captaincy Corner)")
-    captains = feat_df.nlargest(5, 'pred_points')
-    for _, row in captains.iterrows():
-        c1, c2 = st.columns([1, 4])
-        with c1:
-            st.image(row['photo_url'], width=60)
-        with c2:
-            st.markdown(f"**{row['web_name']}** ({row['team_short']})")
-            st.markdown(f"**คะแนนคาดการณ์: {row['pred_points']:.1f}**")
-            st.caption(f"คู่แข่ง: {row['opponent_str']} | ฟอร์ม: {row['form']:.1f}")
+    # --- 2. Captaincy Corner & Price Movement (v1.9.5 - 3-col layout) ---
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.subheader("👑 5 สุดยอดกัปตัน")
+        captains = feat_df.nlargest(5, 'pred_points')
+        if captains.empty:
+            st.caption("ไม่มีข้อมูลกัปตัน")
+        else:
+            for _, row in captains.iterrows():
+                c1, c2 = st.columns([1, 4])
+                with c1:
+                    st.image(row['photo_url'], width=60)
+                with c2:
+                    st.markdown(f"**{row['web_name']}** ({row['team_short']})")
+                    st.markdown(f"**คะแนน: {row['pred_points']:.1f}**")
+                    st.caption(f"คู่แข่ง: {row['opponent_str']}")
+
+    with col2:
+        st.subheader("💹 ราคากำลังขึ้น 🔼")
+        
+        # --- Price Risers ---
+        risers = feat_df[feat_df['cost_change_event'] > 0].sort_values('cost_change_event', ascending=False).head(5)
+        if risers.empty:
+            st.caption("ไม่มีนักเตะราคาขึ้นในสัปดาห์นี้")
+        else:
+            for _, row in risers.iterrows():
+                c1, c2 = st.columns([1, 4])
+                with c1: st.image(row['photo_url'], width=60)
+                with c2: 
+                    st.markdown(f"**{row['web_name']}** ({row['team_short']})")
+                    st.caption(f"▲ ราคาขึ้น: £{row['cost_change_event']/10.0:.1f}m")
+
+    with col3:
+        st.subheader("🔻 ราคากำลังลง 📉")
+        
+        # --- Price Fallers ---
+        fallers = feat_df[feat_df['cost_change_event'] < 0].sort_values('cost_change_event', ascending=True).head(5)
+        if fallers.empty:
+            st.caption("ไม่มีนักเตะราคาลงในสัปดาห์นี้")
+        else:
+            for _, row in fallers.iterrows():
+                c1, c2 = st.columns([1, 4])
+                with c1: st.image(row['photo_url'], width=60)
+                with c2: 
+                    st.markdown(f"**{row['web_name']}** ({row['team_short']})")
+                    st.caption(f"▼ ราคาลง: £{row['cost_change_event']/10.0:.1f}m")
+
     st.markdown("---")
 
     # --- 3. Top 20 Players ---
@@ -1067,35 +1391,16 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     st.markdown("---")
 
     # --- 5. Fixture Difficulty ---
-    st.subheader("🗓️ ตารางแข่ง (Fixture Difficulty)")
-    col1, col2 = st.columns(2)
+    st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
+    st.markdown("เรียงตามลำดับง่าย ➡ ยาก (สีเขียว = ง่าย, สีแดง = ยาก)")
     
-    # Merge nf with team names AND LOGOS
-    nf_with_names = nf_df.merge(teams_df[['id', 'short_name', 'logo_url']], left_on='team', right_on='id')
+    # --- NEW (v1.9.3): Display Visual HTML Heatmap ---
+    display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
     
-    with col1:
-        st.markdown("#### ✅ 5 ทีมที่ตารางแข่งง่ายที่สุด (น่าซื้อ)")
-        easy_fixtures = nf_with_names[nf_with_names['num_fixtures'] > 0].nlargest(5, 'avg_fixture_ease')
-        
-        for _, row in easy_fixtures.iterrows():
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                st.image(row['logo_url'], width=40)
-            with c2:
-                st.markdown(f"**{row['short_name']}**")
-                st.markdown(f"คะแนนความง่าย: **{row['avg_fixture_ease']:.2f}**")
-        
-    with col2:
-        st.markdown("#### ❌ 5 ทีมที่ตารางแข่งยากที่สุด (น่าขาย)")
-        hard_fixtures = nf_with_names[nf_with_names['num_fixtures'] > 0].nsmallest(5, 'avg_fixture_ease')
-
-        for _, row in hard_fixtures.iterrows():
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                st.image(row['logo_url'], width=40)
-            with c2:
-                st.markdown(f"**{row['short_name']}**")
-                st.markdown(f"คะแนนความง่าย: **{row['avg_fixture_ease']:.2f}**")
+    # Display Rotation Pairs
+    st.markdown("#### 🥅 Top 5 คู่ผู้รักษาประตู (GK Rotation Pairs)")
+    st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
+    st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
     st.markdown("---")
     
     # --- 6. Player Trends (Now 3 columns) ---
@@ -1259,8 +1564,6 @@ def main():
     # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW (ย้ายมาตรงนี้เพื่อให้ข้อมูล 'nf' พร้อมใช้) ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
     
-    # (ย้าย dgw_note / bgw_note ไปอยู่ใน display_home_dashboard)
-
     feat = engineer_features(elements, teams, nf)
     feat.set_index('id', inplace=True)
     feat["pred_points"] = feat["pred_points_heur"]
@@ -1285,7 +1588,12 @@ def main():
         try:
             # --- NEW: Display the full home dashboard (v1.9.0) ---
             st.header(f"ภาพรวมสัปดาห์ที่ {target_event} (GW{target_event} Overview)")
-            display_home_dashboard(feat, nf, teams)
+            
+            # --- NEW: Generate Fixture Planner data ---
+            opponent_matrix, difficulty_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
+            rotation_pairs = find_rotation_pairs(difficulty_matrix, teams, feat)
+
+            display_home_dashboard(feat, nf, teams, opponent_matrix, difficulty_matrix, rotation_pairs)
         
         except Exception as e:
             st.error(f"Error creating home dashboard: {e}")
@@ -1793,7 +2101,7 @@ def main():
                                         xi_display_df_sim = xi_df_sim_list[['web_name', 'team_short', 'pos', 'pred_points']]
                                         display_user_friendly_table(
                                             df=xi_display_df_sim,
-                                            title="", # Title handled by tab
+                                            title="", # Title is handled by tab
                                             height=420
                                         )
                                 
