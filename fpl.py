@@ -1178,8 +1178,8 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
             vertical-align: middle;
         }
         /* Color classes from user request (UPDATED) */
-        .bg-easy { background-color: #00C232; color: black; }
-        .bg-medium { background-color: #E37619; color: black; }
+        .bg-easy { background-color: #35F00A; color: black; }
+        .bg-medium { background-color: #FFF100; color: black; }
         .bg-hard { background-color: #FF0000; color: white; }
         .bg-blank { background-color: #373737; color: white; }
         .dgw-cell { 
@@ -1393,7 +1393,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
 
     # --- 4. Value Scatter Plot ---
     st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
-    st.markdown("มองหานักเตะที่อยู่ **มุมบนซ้าย** (คะแนนสูง, ราคาถูก)")
+    st.markdown("ใช้เมาส์ Hover มองหานักเตะที่อยู่ **มุมบนซ้าย** แยกสีตามตำแหน่ง(คะแนนสูง, ราคาถูก)")
     value_df = feat_df[feat_df['pred_points'] > 2.0].copy() # Filter out duds
     value_df['price'] = value_df['now_cost'] / 10.0
     value_df['position'] = value_df['element_type'].map(POSITIONS)
@@ -1411,6 +1411,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
 
     # --- 5. Fixture Difficulty ---
     st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
+    st.markdown("เรียงตามความยากง่ายของตารางแข่งขัน (สีเขียว = ง่าย, สีแดง = ยาก)")
     
     # --- NEW (v1.9.3): Display Visual HTML Heatmap ---
     display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
