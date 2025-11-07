@@ -688,6 +688,11 @@ def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFr
     for col in cols_to_process:
         if col in elements.columns:
             elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
+
+    # --- BUGFIX (v1.9.9): Explicitly cast cost_change_event to integer ---
+    # This resolves a bug on Streamlit Cloud where filtering for negative values failed.
+    if 'cost_change_event' in elements.columns:
+        elements['cost_change_event'] = elements['cost_change_event'].astype(int)
     
     # --- NEW: Add photo_url ---
     elements['photo_url'] = 'https://resources.premierleague.com/premierleague/photos/players/110x140/p' + elements['code'].astype(int).astype(str) + '.png'
