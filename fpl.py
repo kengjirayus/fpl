@@ -7,37 +7,39 @@ What it does
 - Predicts next GW points with a hybrid approach
 - Optimizes your Starting XI & bench order
 - Suggests transfers based on selected strategy
-- **NEW**: Home Dashboard v1.9.6 (Added image fallbacks for missing player photos)
+- **NEW**: Home Dashboard v1.9.7 (Added Understat xG/xA/xPTS section)
 - **NEW**: Visual Fixture Planner with Logos (v1.9.3)
 - Displays Starting XI in a "Pitch View" or "List View"
 - Includes a "Simulation Mode" to manually edit your 15-man squad
 
 How to run
-1) pip install streamlit pandas numpy scikit-learn pulp requests altair
+1) pip install streamlit pandas numpy scikit-learn pulp requests altair beautifulsoup4
 2) streamlit run fpl.py
 
 Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.9.6 - Added Image Fallback
+# V1.9.7 - Added Understat Section
 ###############################
 
 import os
 import math
 import json
 import time
+import re # <-- NEW IMPORT for Understat
 from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-import altair as alt # <-- NEW IMPORT
+import altair as alt
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
+from bs4 import BeautifulSoup # <-- NEW IMPORT for Understat
 
 ###############################
 # Fav icon
@@ -127,6 +129,211 @@ def get_entry(entry_id: int) -> Dict:
 def get_entry_picks(entry_id: int, event: int) -> Dict:
     """Fetches a user's picks for a specific gameweek."""
     return _fetch(f"{FPL_BASE}/entry/{entry_id}/event/{event}/picks/") or {}
+
+###############################
+# --- NEW: Understat Data Functions ---
+###############################
+
+# This hardcoded map links Understat's full team name to FPL's 'name'
+UNDERSTAT_TEAM_TO_FPL_NAME = {
+    "Arsenal": "Arsenal",
+    "Aston Villa": "Aston Villa",
+    "Bournemouth": "Bournemouth",
+    "Brentford": "Brentford",
+    "Brighton": "Brighton",
+    "Chelsea": "Chelsea",
+    "Crystal Palace": "Crystal Palace",
+    "Everton": "Everton",
+    "Fulham": "Fulham",
+    "Ipswich": "Ipswich",
+    "Leicester": "Leicester",
+    "Liverpool": "Liverpool",
+    "Manchester City": "Man City",
+    "Manchester United": "Man Utd",
+    "Newcastle United": "Newcastle",
+    "Nottingham Forest": "Nott'm Forest",
+    "Southampton": "Southampton",
+    "Tottenham": "Spurs",
+    "West Ham": "West Ham",
+    "Wolverhampton Wanderers": "Wolves",
+    # Add other teams as needed if they change
+    "Leeds": "Leeds",
+    "Burnley": "Burnley",
+    "Sheffield United": "Sheffield Utd",
+    "Luton": "Luton"
+}
+
+@st.cache_data(ttl=3600) # Cache for 1 hour
+def get_understat_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetches player and team data from Understat.com."""
+    try:
+        url = "https://understat.com/league/EPL"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+        }
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Find script tags
+        scripts = soup.find_all('script')
+        
+        players_data_str = None
+        teams_data_str = None
+        
+        for script in scripts:
+            if script.string and 'playersData' in script.string:
+                players_data_str = script.string
+            if script.string and 'teamsData' in script.string:
+                teams_data_str = script.string
+
+        # 1. Process Players Data
+        players_df = pd.DataFrame()
+        if players_data_str:
+            match = re.search(r"var playersData\s*=\s*JSON\.parse\('(.+?)'\);", players_data_str)
+            if match:
+                json_data = match.group(1).encode('utf-8').decode('unicode_escape')
+                players_data = json.loads(json_data)
+                players_df = pd.DataFrame(players_data)
+                # Convert necessary columns
+                players_df['xG'] = pd.to_numeric(players_df['xG'], errors='coerce')
+                players_df['xA'] = pd.to_numeric(players_df['xA'], errors='coerce')
+                players_df = players_df[['id', 'player_name', 'team_title', 'xG', 'xA']]
+            
+        # 2. Process Teams Data
+        teams_df = pd.DataFrame()
+        if teams_data_str:
+            match = re.search(r"var teamsData\s*=\s*JSON\.parse\('(.+?)'\);", teams_data_str)
+            if match:
+                json_data = match.group(1).encode('utf-8').decode('unicode_escape')
+                teams_data = json.loads(json_data)
+                
+                team_list = []
+                
+                # --- START FIX ---
+                # โค้ดเดิมใช้ 'team_name' (ซึ่งเป็น ID เช่น "80")
+                # เราต้องใช้ 'team_data['title']' (ซึ่งเป็นชื่อเช่น "Arsenal")
+                for team_id_key, team_data in teams_data.items():
+                # --- END FIX ---
+                
+                    # Get the last entry in history for the most up-to-date xPTS
+                    if team_data.get('history'):
+                        latest_stats = team_data['history'][-1]
+                        team_list.append({
+                            # --- START FIX ---
+                            'title': team_data.get('title'), # <-- แก้ไขตรงนี้: ดึงชื่อทีมจาก value
+                            # --- END FIX ---
+                            'xpts': latest_stats.get('xpts', 0)
+                        })
+                teams_df = pd.DataFrame(team_list)
+                teams_df['xpts'] = pd.to_numeric(teams_df['xpts'], errors='coerce')
+
+        return players_df, teams_df
+
+    except Exception as e:
+        st.warning(f"Could not fetch Understat data: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+    
+def check_name_match(fpl_name: str, understat_name: str) -> bool:
+    """Checks if FPL web_name matches Understat player_name."""
+    if not fpl_name or not understat_name:
+        return False
+        
+    fpl_name_lower = str(fpl_name).lower()
+    understat_name_lower = str(understat_name).lower()
+    
+    # Direct match (e.g., "Salah" in "mohamed salah")
+    if fpl_name_lower in understat_name_lower:
+        return True
+        
+    # Check last name
+    try:
+        fpl_last = fpl_name_lower.split(' ')[-1]
+        understat_last = understat_name_lower.split(' ')[-1]
+        if fpl_last == understat_last:
+            return True
+    except Exception:
+        pass # Ignore splitting errors
+        
+    return False
+
+@st.cache_data(ttl=3600)
+def merge_understat_data(
+    us_players_df: pd.DataFrame, 
+    us_teams_df: pd.DataFrame, 
+    fpl_players_df: pd.DataFrame, 
+    fpl_teams_df: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Merges Understat data with FPL data for photos and logos."""
+    
+    # 1. Merge Teams
+    merged_teams = pd.DataFrame()
+    if not us_teams_df.empty and not fpl_teams_df.empty:
+        try:
+            # Map Understat team name to FPL team name
+            us_teams_df['fpl_name'] = us_teams_df['title'].map(UNDERSTAT_TEAM_TO_FPL_NAME)
+            # Merge with FPL teams on name
+            merged_teams = us_teams_df.merge(
+                fpl_teams_df[['name', 'logo_url']], 
+                left_on='fpl_name', 
+                right_on='name',
+                how='left'
+            )
+            
+            # --- START EDIT ---
+            # เราจะเก็บ 'name' (ชื่อ FPL) และ 'title' (ชื่อ Understat) ไว้ทั้งคู่
+            merged_teams = merged_teams[['title', 'name', 'xpts', 'logo_url']].sort_values('xpts', ascending=False)
+            # --- END EDIT ---
+
+        except Exception as e:
+            st.warning(f"Error merging Understat teams: {e}")
+
+    # 2. Merge Players
+    merged_players = pd.DataFrame()
+    if not us_players_df.empty and not fpl_players_df.empty and not fpl_teams_df.empty:
+        try:
+            # Create a lookup for FPL team name -> FPL team id
+            fpl_name_to_id_map = fpl_teams_df.set_index('name')['id'].to_dict()
+            
+            # Map Understat team title -> FPL team name -> FPL team id
+            us_players_df['fpl_name'] = us_players_df['team_title'].map(UNDERSTAT_TEAM_TO_FPL_NAME)
+            us_players_df['fpl_team_id'] = us_players_df['fpl_name'].map(fpl_name_to_id_map)
+            
+            # Get the columns we need from FPL data
+            fpl_lookup = fpl_players_df[['team', 'web_name', 'photo_url', 'team_short']].copy()
+            
+            # Merge Understat players with FPL lookup on team ID
+            # This creates many potential matches for each team
+            combined_df = us_players_df.merge(
+                fpl_lookup, 
+                left_on='fpl_team_id', 
+                right_on='team',
+                how='inner'
+            )
+            
+            # Find the correct name match
+            combined_df['name_match'] = combined_df.apply(
+                lambda row: check_name_match(row['web_name'], row['player_name']), 
+                axis=1
+            )
+            
+            # Filter for correct matches
+            final_players = combined_df[combined_df['name_match'] == True].copy()
+            
+            # Clean up and drop duplicates
+            # A player might match multiple (e.g., "Jota" matches "Diogo Jota")
+            # We sort by xG and take the best, this isn't perfect but good enough
+            final_players = final_players.sort_values('xG', ascending=False)
+            merged_players = final_players.drop_duplicates(subset=['id', 'player_name'])
+            
+            merged_players = merged_players[[
+                'player_name', 'team_short', 'photo_url', 'xG', 'xA'
+            ]]
+        except Exception as e:
+            st.warning(f"Error merging Understat players: {e}")
+
+    return merged_players, merged_teams
 
 ###############################
 # ปรับปรุง Table Headers ให้ User-Friendly
@@ -1239,8 +1446,93 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
 # --- NEW: Home Dashboard Function (v1.9.0) ---
 ###############################
 
-def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df: pd.DataFrame, 
-                           opp_matrix: pd.DataFrame, diff_matrix: pd.DataFrame, rotation_pairs: pd.DataFrame):
+# --- NEW (v1.9.7): Helper function for Understat section ---
+def display_understat_section(merged_players: pd.DataFrame, merged_teams: pd.DataFrame):
+    """Displays the Understat xG, xA, and xPTS section."""
+    
+    st.subheader("📊 สถิติจาก Understat (xG, xA, xPTS)")
+    
+    # --- NEW (v1.9.6): Add placeholder URL and helper function ---
+    DEFAULT_PHOTO_URL = "https://resources.premierleague.com/premierleague/photos/players/110x140/p-blank.png"
+
+    def get_player_image_html(photo_url, player_name, width=60):
+        """Generates an HTML img tag with a fallback placeholder."""
+        # Use HTML entities for quotes inside the onerror attribute
+        alt_text = str(player_name).replace("'", "").replace('"', '')
+        src_url = photo_url if pd.notna(photo_url) else DEFAULT_PHOTO_URL
+        return f'<img src="{src_url}" alt="{alt_text}" width="{width}" style="border-radius: 4px; min-height: {int(width*1.33)}px; background-color: #eee;" onerror="this.onerror=null;this.src=\'{DEFAULT_PHOTO_URL}\';">'
+
+    col1, col2, col3 = st.columns(3)
+
+    # --- Column 1: Top 5 xG ---
+    with col1:
+        st.markdown("#### 🎯 Top 5 xG (โอกาสยิง)")
+        if merged_players.empty or 'xG' not in merged_players.columns:
+            st.caption("ไม่มีข้อมูล xG")
+        else:
+            top_xg = merged_players.nlargest(5, 'xG')
+            for _, row in top_xg.iterrows():
+                c1, c2 = st.columns([1, 4])
+                with c1:
+                    st.markdown(get_player_image_html(row['photo_url'], row['player_name'], 60), unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"**{row['player_name']}** ({row['team_short']})")
+                    st.markdown(f"**xG: {row['xG']:.2f}**")
+
+    # --- Column 2: Top 5 xA ---
+    with col2:
+        st.markdown("#### 🅰️ Top 5 xA (โอกาสจ่าย)")
+        if merged_players.empty or 'xA' not in merged_players.columns:
+            st.caption("ไม่มีข้อมูล xA")
+        else:
+            top_xa = merged_players.nlargest(5, 'xA')
+            for _, row in top_xa.iterrows():
+                c1, c2 = st.columns([1, 4])
+                with c1:
+                    st.markdown(get_player_image_html(row['photo_url'], row['player_name'], 60), unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"**{row['player_name']}** ({row['team_short']})")
+                    st.markdown(f"**xA: {row['xA']:.2f}**")
+
+    # --- Column 3: Top 5 xPTS ---
+    with col3:
+        st.markdown("#### 📈 Top 5 xPTS (คะแนนคาดหวัง)")
+        if merged_teams.empty or 'xpts' not in merged_teams.columns:
+            st.caption("ไม่มีข้อมูล xPTS")
+        else:
+            top_xpts = merged_teams.nlargest(5, 'xpts')
+            for _, row in top_xpts.iterrows():
+                c1, c2 = st.columns([1, 4])
+                
+                # --- START EDIT ---
+                with c1:
+                    # 1. ดึง logo_url (ถ้ามี)
+                    logo_url = row['logo_url'] if pd.notna(row['logo_url']) else ""
+                    # 2. หาชื่อที่จะใช้เป็น alt text (ชื่อ FPL ถ้ามี, ไม่มีก็ใช้ชื่อ Understat)
+                    alt_text = row['name'] if pd.notna(row['name']) else row['title']
+                    # 3. ใช้ st.markdown เพื่อแสดงผล (แก้ปัญหา st.image error)
+                    st.markdown(f'<img src="{logo_url}" alt="{alt_text}" width="40" style="min-height: 40px; background-color: #eee; border-radius: 4px;">', unsafe_allow_html=True)
+                
+                with c2:
+                    # 4. แสดงชื่อทีม FPL (row['name']) ถ้ามี, ถ้าไม่มี (merge ไม่เจอ)
+                    #    ให้แสดงชื่อทีม Understat (row['title']) แทน
+                    display_name = row['name'] if pd.notna(row['name']) else row['title']
+                    st.markdown(f"**{display_name}**")
+                    st.markdown(f"**xPTS: {row['xpts']:.2f}**")
+                # --- END EDIT ---
+                    
+    st.markdown("---")
+
+def display_home_dashboard(
+    feat_df: pd.DataFrame, 
+    nf_df: pd.DataFrame, 
+    teams_df: pd.DataFrame, 
+    opp_matrix: pd.DataFrame, 
+    diff_matrix: pd.DataFrame, 
+    rotation_pairs: pd.DataFrame,
+    merged_understat_players: pd.DataFrame, # <-- NEW
+    merged_understat_teams: pd.DataFrame  # <-- NEW
+):
     """
     Displays the full home page dashboard (DGW/BGW, Captains, Top 20, Value, Fixtures, Trends).
     """
@@ -1251,8 +1543,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
     def get_player_image_html(photo_url, player_name, width=60):
         """Generates an HTML img tag with a fallback placeholder."""
         # Use HTML entities for quotes inside the onerror attribute
-        alt_text = player_name.replace("'", "").replace('"', '')
-        return f'<img src="{photo_url}" alt="{alt_text}" width="{width}" style="border-radius: 4px; min-height: {int(width*1.33)}px; background-color: #eee;" onerror="this.onerror=null;this.src=\'{DEFAULT_PHOTO_URL}\';">'
+        alt_text = str(player_name).replace("'", "").replace('"', '')
+        src_url = photo_url if pd.notna(photo_url) else DEFAULT_PHOTO_URL
+        return f'<img src="{src_url}" alt="{alt_text}" width="{width}" style="border-radius: 4px; min-height: {int(width*1.33)}px; background-color: #eee;" onerror="this.onerror=null;this.src=\'{DEFAULT_PHOTO_URL}\';">'
 
     
     # --- 1. DGW/BGW Tracker (Conditional) ---
@@ -1345,6 +1638,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                     # ===== END USER EDIT =====
 
     st.markdown("---")
+    
+    # --- NEW (v1.9.7): Call Understat Section ---
+    display_understat_section(merged_understat_players, merged_understat_teams)
 
     # --- 3. Top 20 Players ---
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
@@ -1453,7 +1749,7 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
             with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คะแนน: {row['pred_points']:.1f} | คนมี: {row['selected_by_percent']:.1f}%")
 
     with col3:
-        st.markdown("#### 👥 Top 5 ขวัญใจมหาชน (Most Owned)")
+        st.markdown("#### 👥 Top 5 ขวัญใจมหาชน")
         most_owned = feat_df.nlargest(5, 'selected_by_percent')
         for _, row in most_owned.iterrows():
             c1, c2 = st.columns([1, 3])
@@ -1624,7 +1920,17 @@ def main():
             opponent_matrix, difficulty_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
             rotation_pairs = find_rotation_pairs(difficulty_matrix, teams, feat)
 
-            display_home_dashboard(feat, nf, teams, opponent_matrix, difficulty_matrix, rotation_pairs)
+            # --- NEW (v1.9.7): Get Understat Data ---
+            us_players, us_teams = get_understat_data()
+            merged_us_players, merged_us_teams = merge_understat_data(
+                us_players, us_teams, feat, teams
+            )
+
+            display_home_dashboard(
+                feat, nf, teams, 
+                opponent_matrix, difficulty_matrix, rotation_pairs,
+                merged_us_players, merged_us_teams # <-- Pass new data
+            )
         
         except Exception as e:
             st.error(f"Error creating home dashboard: {e}")

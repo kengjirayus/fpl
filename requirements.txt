@@ -5,3 +5,4 @@ scikit-learn
 pulp
 requests
 altair
+beautifulsoup4
