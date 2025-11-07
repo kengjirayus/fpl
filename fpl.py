@@ -20,7 +20,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.9.7 - Added Understat Section
+# V1.9.8 - Re-Order landing Page
 ###############################
 
 import os
@@ -1578,7 +1578,7 @@ def display_home_dashboard(
                     with c2: st.markdown(f"**{row['short_name']}**"); st.caption("ไม่มีนัดแข่ง")
         st.markdown("---")
 
-    # --- 2. Captaincy Corner & Price Movement (v1.9.5 - 3-col layout) ---
+    # --- Captaincy Corner & Price Movement (v1.9.5 - 3-col layout) ---
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -1637,12 +1637,10 @@ def display_home_dashboard(
                     st.caption(f"ราคา (£): £{row['now_cost']/10.0:.1f}m")
                     # ===== END USER EDIT =====
 
-    st.markdown("---")
-    
-    # --- NEW (v1.9.7): Call Understat Section ---
-    display_understat_section(merged_understat_players, merged_understat_teams)
 
-    # --- 3. Top 20 Players ---
+    st.markdown("---")
+
+        # --- Top 20 Players ---
     st.subheader("⭐ Top 20 นักเตะคะแนนคาดการณ์สูงสุด")
     st.caption("หมายเหตุ: ตารางนี้อาจยังแสดงไอคอนรูปเสีย 🖼️ หากไม่มีรูปใน API ครับ")
     top_tbl = feat_df[["photo_url", "web_name", "team_short", "element_type", "now_cost", "form", "avg_fixture_ease", "pred_points"]].copy()
@@ -1692,39 +1690,11 @@ def display_home_dashboard(
         disabled=True # Read-only
     )
     st.markdown("---")
+    
+    # --- NEW (v1.9.7): Call Understat Section ---
+    display_understat_section(merged_understat_players, merged_understat_teams)
 
-    # --- 4. Value Scatter Plot ---
-    st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
-    st.markdown("🪄 เอาเมาส์ไปชี้เพื่อดูชื่อนักเตะได้เลย!แต่ละจุดบอกตำแหน่ง ส่วนจุดใกล้มุมซ้ายบนคือของดีราคาถูก 💰")
-    value_df = feat_df[feat_df['pred_points'] > 2.0].copy() # Filter out duds
-    value_df['price'] = value_df['now_cost'] / 10.0
-    value_df['position'] = value_df['element_type'].map(POSITIONS)
-    
-    chart = alt.Chart(value_df).mark_circle().encode(
-        x=alt.X('price', title='ราคา (£)'),
-        y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
-        color='position',
-        tooltip=['web_name', 'team_short', 'price', 'pred_points'] # Add name and team
-    ).interactive() # Make it zoomable/pannable
-    
-    st.altair_chart(chart, use_container_width=True)
-    st.caption("หมายเหตุ: การแสดงรูปนักเตะใน tooltip ของกราฟนี้ยังไม่รองรับครับ")
-    st.markdown("---")
-
-    # --- 5. Fixture Difficulty ---
-    st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
-    st.markdown("เรียงตามความยากง่ายของตารางแข่งขัน (สีเขียว = ง่าย, สีแดง = ยาก)")
-    
-    # --- NEW (v1.9.3): Display Visual HTML Heatmap ---
-    display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
-    
-    # Display Rotation Pairs
-    st.markdown("#### 🔄 Top 5 คู่ผู้รักษาประตู (GK Rotation Pairs)")
-    st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
-    st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
-    st.markdown("---")
-    
-    # --- 6. Player Trends (Now 3 columns) ---
+        # --- Player Trends (Now 3 columns) ---
     st.subheader("🔥 นักเตะน่าสนใจ (Player Trends)")
     col1, col2, col3 = st.columns(3) # <-- Changed to 3
     
@@ -1757,7 +1727,37 @@ def display_home_dashboard(
                 # --- MODIFIED (v1.9.6): Use HTML fallback ---
                 st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 50), unsafe_allow_html=True)
             with c2: st.markdown(f"**{row['web_name']}**"); st.caption(f"คนมี: {row['selected_by_percent']:.1f}%")
+    st.markdown("---")
 
+    # --- Fixture Difficulty ---
+    st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
+    st.markdown("เรียงตามความง่าย ➡ ยากของตารางแข่งขัน (สีเขียว = ง่าย, สีแดง = ยาก)")
+    display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
+    st.markdown("---")
+
+    
+    # --- Value Scatter Plot ---
+    st.subheader("💰 กราฟนักเตะคุ้มค่า (Value Finder)")
+    st.markdown("🪄 เอาเมาส์ไปชี้เพื่อดูชื่อนักเตะได้เลย!แต่ละจุดบอกตำแหน่ง ส่วนจุดใกล้มุมซ้ายบนคือของดีราคาถูก 💰")
+    value_df = feat_df[feat_df['pred_points'] > 2.0].copy() # Filter out duds
+    value_df['price'] = value_df['now_cost'] / 10.0
+    value_df['position'] = value_df['element_type'].map(POSITIONS)
+    
+    chart = alt.Chart(value_df).mark_circle().encode(
+        x=alt.X('price', title='ราคา (£)'),
+        y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
+        color='position',
+        tooltip=['web_name', 'team_short', 'price', 'pred_points'] # Add name and team
+    ).interactive() # Make it zoomable/pannable
+    
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("หมายเหตุ: การแสดงรูปนักเตะใน tooltip ของกราฟนี้ยังไม่รองรับครับ")
+    st.markdown("---")
+    
+    # Display Rotation Pairs
+    st.markdown("#### 🥅 Top 5 คู่ผู้รักษาประตู (GK Rotation Pairs)")
+    st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
+    st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
 
 ###############################
 # Streamlit UI
@@ -1884,9 +1884,23 @@ def main():
         local_time = utc_time.astimezone(local_tz)
         
         # จัดรูปแบบการแสดงผลที่อ่านง่าย
-        deadline_text = f" | ⏳ Deadline: **{local_time.strftime('%a, %d %b %H:%M %Z')}**"
-
-    st.info(f"📅 สัปดาห์ที่: **{cur_event}** | วิเคราะห์เกมสัปดาห์ที่: **{target_event}**{deadline_text}")
+        deadline_text = f" | ⏳ Deadline: <b>{local_time.strftime('%a, %d %b %H:%M %Z')}</b>"
+    
+    st.markdown(f"""
+    <div style="
+        background-color:#e8f4fd;
+        padding:1rem;
+        border-radius:0.5rem;
+        border-left:5px solid #2b8ad7;
+        font-size:28px;
+        font-weight:600;
+        color:#0a2540;
+    ">
+        📅 สัปดาห์ที่: <b>{cur_event}</b> | 
+        วิเคราะห์เกมสัปดาห์ที่: <b>{target_event}</b>
+        {deadline_text}
+    </div>
+""", unsafe_allow_html=True)
 
     # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW (ย้ายมาตรงนี้เพื่อให้ข้อมูล 'nf' พร้อมใช้) ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
@@ -1914,7 +1928,7 @@ def main():
         
         try:
             # --- NEW: Display the full home dashboard (v1.9.0) ---
-            st.header(f"ภาพรวมสัปดาห์ที่ {target_event} (GW{target_event} Overview)")
+            ##st.header(f"ภาพรวมสัปดาห์ที่ {target_event} (GW{target_event} Overview)")
             
             # --- NEW: Generate Fixture Planner data ---
             opponent_matrix, difficulty_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
