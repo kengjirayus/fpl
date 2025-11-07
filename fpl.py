@@ -1320,6 +1320,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
                     st.caption(f"▲ ราคาขึ้น: £{row['cost_change_event']/10.0:.1f}m")
+                    # ===== START USER EDIT =====
+                    st.caption(f"ราคา (£): £{row['now_cost']/10.0:.1f}m")
+                    # ===== END USER EDIT =====
 
     with col3:
         st.subheader("🔻 ราคากำลังลง 📉")
@@ -1337,6 +1340,9 @@ def display_home_dashboard(feat_df: pd.DataFrame, nf_df: pd.DataFrame, teams_df:
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
                     st.caption(f"▼ ราคาลง: £{row['cost_change_event']/10.0:.1f}m")
+                    # ===== START USER EDIT =====
+                    st.caption(f"ราคา (£): £{row['now_cost']/10.0:.1f}m")
+                    # ===== END USER EDIT =====
 
     st.markdown("---")
 
