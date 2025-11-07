@@ -1632,7 +1632,7 @@ def display_home_dashboard(
                     st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 60), unsafe_allow_html=True)
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
-                    st.caption(f"▼ ราคาลง: £{row['cost_change_event']/10.0:.1f}m")
+                    st.caption(f"▼ ราคาลง: £{abs(row['cost_change_event']/10.0):.1f}m")
                     # ===== START USER EDIT =====
                     st.caption(f"ราคา (£): £{row['now_cost']/10.0:.1f}m")
                     # ===== END USER EDIT =====
