@@ -1,14 +1,15 @@
 """
-FPL Weekly Assistant — single-file Streamlit app (Thai Updated Version)
+FPL Weekly Assistant — single-file Streamlit app (Thai Updated Version v2.0 FULL)
 
 What it does
 - Pulls live data from FPL API (bootstrap-static, fixtures, entry picks)
 - Engineers features (recent form, xGI proxy, minutes reliability, fixture difficulty, photo_url)
-- Predicts next GW points with a hybrid approach
+- Predicts next GW points with a hybrid approach (Enhanced with Understat xG/xA)
 - Optimizes your Starting XI & bench order
 - Suggests transfers based on selected strategy
-- **NEW**: Home Dashboard v1.9.7 (Added Understat xG/xA/xPTS section)
-- **NEW**: Visual Fixture Planner with Logos (v1.9.3)
+- **NEW**: Transfer ROI Calculator (3-GW Projection)
+- Home Dashboard v1.9.7 (Added Understat xG/xA/xPTS section)
+- Visual Fixture Planner with Logos (v1.9.3)
 - Displays Starting XI in a "Pitch View" or "List View"
 - Includes a "Simulation Mode" to manually edit your 15-man squad
 
@@ -20,7 +21,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.9.9 - Add Understat Integration
+# V2.0 - Enhanced Features & ROI Calculator
 ###############################
 
 import os
@@ -232,7 +233,7 @@ def get_understat_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
         return players_df, teams_df
 
     except Exception as e:
-        st.warning(f"Could not fetch Understat data: {e}")
+        # st.warning(f"Could not fetch Understat data: {e}")
         return pd.DataFrame(), pd.DataFrame()
     
 def check_name_match(fpl_name: str, understat_name: str) -> bool:
@@ -581,21 +582,32 @@ def current_and_next_event(events: List[Dict]) -> Tuple[Optional[int], Optional[
         cur = next_ev - 1 if next_ev > 1 else 1
     return cur, next_ev
 
-# --- BUGFIX v1.8.2: Add 'code' to the list of columns ---
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
                  "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away"]
 
 # --- BUGFIX v1.9.1: Define POSITIONS globally ---
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
-
 def build_master_tables(bootstrap: Dict, fixtures: List[Dict]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Constructs the main dataframes for players, teams, events, and fixtures."""
     elements = pd.DataFrame(bootstrap["elements"])
-    teams = pd.DataFrame(bootstrap["teams"])[TEAM_MAP_COLS]
+    teams = pd.DataFrame(bootstrap["teams"]) # ดึงมาทั้งหมดก่อน แล้วค่อยเลือกคอลัมน์
+
+    # --- NEW: Calculate overall strengths ---
+    # FPL API doesn't always provide overall strength directly, so we average home/away
+    teams['strength_overall'] = (teams['strength_overall_home'] + teams['strength_overall_away']) / 2.0
+    teams['strength_attack_overall'] = (teams['strength_attack_home'] + teams['strength_attack_away']) / 2.0
+    teams['strength_defence_overall'] = (teams['strength_defence_home'] + teams['strength_defence_away']) / 2.0
+
+    # Ensure we keep these new columns
+    cols_to_keep = TEAM_MAP_COLS + ['strength_overall', 'strength_attack_overall', 'strength_defence_overall']
+    # Filter only columns that actually exist to avoid errors if API changes
+    cols_to_keep = [col for col in cols_to_keep if col in teams.columns]
+    teams = teams[cols_to_keep].copy()
+    
     events = pd.DataFrame(bootstrap.get("events", []))
     
-    # --- BUGFIX (v1.8.3): Use 70px logos, 280px is Access Denied ---
+    # --- BUGFIX (v1.8.3): Use 70px logos ---
     teams['logo_url'] = 'https://resources.premierleague.com/premierleague/badges/70/t' + teams['code'].astype(str) + '.png'
 
     elements = elements.merge(teams[["id","short_name"]], left_on="team", right_on="id", suffixes=("","_team"))
@@ -669,53 +681,100 @@ def next_fixture_features(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, eve
     df = pd.DataFrame(rows)
     return df
 
-def engineer_features(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame) -> pd.DataFrame:
-    """Joins player table with next fixture info and creates predictive features."""
+# --- REPLACED: Old engineer_features with Enhanced Version (v2.0) ---
+def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: pd.DataFrame, understat_players: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enhanced feature engineering that incorporates Understat xG/xA into predictions.
+    """
+    elements = elements.copy()
     elements["element_type"] = pd.to_numeric(elements["element_type"], errors='coerce').fillna(0).astype(int)
 
-    # Merge fixture data
+    # 1. Merge basic fixture data
     elements = elements.merge(nf, on="team", how="left")
     elements['num_fixtures'] = elements['num_fixtures'].fillna(0).astype(int)
     elements['avg_fixture_ease'] = elements['avg_fixture_ease'].fillna(0)
-    # --- NEW (v1.9.0): Carry over opponent string ---
-    elements['opponent_str'] = elements['opponent_str'].fillna("Error")
+    elements['opponent_str'] = elements['opponent_str'].fillna("-")
 
-    # --- NEW (v1.9.4): Ensure price/transfer columns are numeric ---
+    # 2. Numeric conversion
     cols_to_process = [
-        "form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", "starts", "code",
-        "cost_change_event", "transfers_in_event", "transfers_out_event"
+        "form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", 
+        "minutes", "goals_scored", "assists", "clean_sheets",
+        "cost_change_event", "transfers_in_event", "transfers_out_event", "code"
     ]
     for col in cols_to_process:
         if col in elements.columns:
             elements[col] = pd.to_numeric(elements[col], errors="coerce").fillna(0)
-
-    # --- BUGFIX (v1.9.9): Explicitly cast cost_change_event to integer ---
-    # This resolves a bug on Streamlit Cloud where filtering for negative values failed.
+            
     if 'cost_change_event' in elements.columns:
         elements['cost_change_event'] = elements['cost_change_event'].astype(int)
-    
-    # --- NEW: Add photo_url ---
+
     elements['photo_url'] = 'https://resources.premierleague.com/premierleague/photos/players/110x140/p' + elements['code'].astype(int).astype(str) + '.png'
-    
     elements["chance_of_playing_next_round"] = pd.to_numeric(elements["chance_of_playing_next_round"], errors="coerce").fillna(100)
     elements["play_prob"] = elements["chance_of_playing_next_round"] / 100.0
-    elements["xgi_proxy"] = 0.6 * elements["points_per_game"] + 0.4 * (elements["ict_index"] / 10.0)
 
-    # Heuristic prediction model
+    # 3. Merge Understat Data
+    # Using web_name approximation for simplicity. In production, ID mapping is preferred.
+    if not understat_players.empty and 'xG' in understat_players.columns:
+        # Temp lower case columns for better matching
+        elements['web_name_lower'] = elements['web_name'].str.lower()
+        understat_players['player_name_lower'] = understat_players['player_name'].str.lower()
+        
+        # Merge and deduplicate on player name
+        us_dedup = understat_players[['player_name_lower', 'xG', 'xA']].drop_duplicates('player_name_lower')
+        elements = elements.merge(us_dedup, 
+                                  left_on='web_name_lower', right_on='player_name_lower', 
+                                  how='left')
+        elements['xG'] = elements['xG'].fillna(0)
+        elements['xA'] = elements['xA'].fillna(0)
+        
+        # Clean up temp columns
+        elements.drop(columns=['web_name_lower', 'player_name_lower'], inplace=True, errors='ignore')
+    else:
+        elements['xG'] = 0.0
+        elements['xA'] = 0.0
+
+    # 4. Enhanced Prediction Logic
+    # Base attacking points (using Understat if available, else FPL stats)
+    if elements['xG'].sum() > 0: 
+        # Normalize season xG/xA to per-game (approximate)
+        games_played_est = (elements['minutes'] / 90.0).replace(0, 1)
+        xg_per_game = elements['xG'] / games_played_est
+        xa_per_game = elements['xA'] / games_played_est
+        
+        # Apply position multipliers for goals (DEF=6, MID=5, FWD=4)
+        goal_pts_mult = np.select(
+            [elements["element_type"] == 2, elements["element_type"] == 3, elements["element_type"] == 4],
+            [6.0, 5.0, 4.0], default=0.0
+        )
+        assist_pts_mult = 3.0
+        att_base = (xg_per_game * goal_pts_mult) + (xa_per_game * assist_pts_mult)
+    else:
+        # Fallback to old xgi_proxy if no Understat
+        att_base = 0.6 * elements["points_per_game"] + 0.4 * (elements["ict_index"] / 10.0)
+
+    # Base defensive points (Clean Sheets proxy from form)
+    def_base = elements['form'] * 0.1 
+
+    # Combine into a new robust base Predict Score (before fixture adjustment)
+    # Weighting: Attack 60%, Form 40% + Defensive base
+    elements['base_xP'] = (att_base * 0.6) + (elements['form'] * 0.4) + def_base
+    
+    # Positional Multiplier for Heuristic (slightly boost FWDs/MIDs who play)
     pos_mult = np.select(
         [elements["element_type"] == 1, elements["element_type"] == 2, elements["element_type"] == 3, elements["element_type"] == 4],
-        [0.6, 0.8, 1.0, 1.1],
-        default=1.0
+        [0.9, 0.95, 1.0, 1.05], default=1.0
     )
-    elements["pred_points_heur"] = (
-        (0.45 * elements["xgi_proxy"] + 0.35 * elements["form"] + 0.2 * elements["points_per_game"]) *
-        (0.6 + 0.4 * elements["avg_fixture_ease"]) *
-        (0.5 + 0.5 * elements["play_prob"]) * pos_mult * elements['num_fixtures']
+
+    # Final Heuristic with Fixture & Play Probability
+    elements["pred_points_enhanced"] = (
+        elements['base_xP'] * (0.5 + 0.5 * elements["avg_fixture_ease"]) * # Fixture adjustment
+        (0.4 + 0.6 * elements["play_prob"]) * # Playing time adjustment
+        pos_mult * elements['num_fixtures']                      # DGW/BGW adjustment
     )
-    elements["pred_points_heur"] = elements["pred_points_heur"].clip(lower=0, upper=30)
     
-    # Ensure BGW players have 0 points
-    elements.loc[elements['num_fixtures'] == 0, 'pred_points_heur'] = 0
+    # Clip reasonable values
+    elements["pred_points_enhanced"] = elements["pred_points_enhanced"].clip(lower=0, upper=25)
+    elements.loc[elements['num_fixtures'] == 0, 'pred_points_enhanced'] = 0
 
     return elements
 
@@ -855,6 +914,77 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
 # Squad & optimization
 ###############################
 
+# --- NEW (v2.0): 3-GW Projector for ROI ---
+@st.cache_data(ttl=300)
+def predict_next_n_gws(player_id: int, n_gws: int, current_gw: int, 
+                       elements_df: pd.DataFrame, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame) -> float:
+    """
+    Predicts total points for a single player over the next N gameweeks.
+    Uses base_xP combined with specific future fixture difficulties.
+    """
+    if player_id not in elements_df.index:
+        return 0.0
+        
+    player = elements_df.loc[player_id]
+    team_id = player['team']
+    # Use base_xP if available, else derive roughly from predicted points
+    base_xp = player.get('base_xP', player.get('pred_points', 0) / max(0.5, player.get('avg_fixture_ease', 1)))
+    play_prob = player.get('play_prob', 1.0)
+    
+    total_expected_points = 0.0
+    
+    # Pre-calculate team strengths for speed
+    team_def_strength = teams_df.set_index('id')['strength_defence_overall'].to_dict()
+    avg_def_strength = np.mean(list(team_def_strength.values()))
+
+    for gw in range(current_gw, current_gw + n_gws):
+        # Get fixtures for this team in this GW
+        gw_fixtures = fixtures_df[(fixtures_df['event'] == gw) & 
+                                  ((fixtures_df['team_h'] == team_id) | (fixtures_df['team_a'] == team_id))]
+        
+        if gw_fixtures.empty:
+            continue # Blank GW adds 0 points
+
+        for _, fixture in gw_fixtures.iterrows():
+            is_home = fixture['team_h'] == team_id
+            opponent_id = fixture['team_a'] if is_home else fixture['team_h']
+            
+            # Calculate Fixture Multiplier (Avg Strength / Opponent Strength)
+            opp_strength = team_def_strength.get(opponent_id, avg_def_strength)
+            fixture_multiplier = avg_def_strength / max(opp_strength, 1) # Avoid div by zero
+            
+            # Adjust for Home/Away (approx 10% boost for home)
+            home_boost = 1.1 if is_home else 0.95
+            
+            # Calculate points for this fixture
+            match_xp = base_xp * fixture_multiplier * home_boost * play_prob
+            total_expected_points += match_xp
+
+    return total_expected_points
+
+# --- NEW (v2.0): Transfer ROI Calculator Function ---
+def calculate_transfer_roi(player_out_id: int, player_in_id: int, current_gw: int,
+                           elements_df: pd.DataFrame, fixtures_df: pd.DataFrame, teams_df: pd.DataFrame,
+                           hit_cost: int = 0, lookahead: int = 3) -> Dict:
+    """
+    Calculates the expected Net Gain over the next N gameweeks for a specific transfer.
+    """
+    # Predict next N GWs for both players
+    out_xp_3gw = predict_next_n_gws(player_out_id, lookahead, current_gw, elements_df, fixtures_df, teams_df)
+    in_xp_3gw = predict_next_n_gws(player_in_id, lookahead, current_gw, elements_df, fixtures_df, teams_df)
+    
+    # Calculate ROI
+    gross_gain = in_xp_3gw - out_xp_3gw
+    net_gain = gross_gain - hit_cost
+    
+    return {
+        "out_xp_3gw": out_xp_3gw,
+        "in_xp_3gw": in_xp_3gw,
+        "gross_gain": gross_gain,
+        "net_gain": net_gain,
+        "is_worth_it": net_gain > 0.5 # Threshold for "worth it"
+    }
+
 def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], List[int]]:
     """Return (start_ids, bench_ids) maximizing predicted points subject to FPL formation."""
     ids = list(squad_players_df.index)
@@ -885,264 +1015,117 @@ def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], Lis
         # Return empty lists if no optimal solution found
         return [], []
 
+# (Old calculate_3gw_roi preserved for backward compatibility if needed, though new one is better)
 def calculate_3gw_roi(player, fixtures_df, teams_df, current_event):
-    """Calculate expected points over next 3 GWs for ROI analysis."""
+    """Calculate expected points over next 3 GWs for ROI analysis (Legacy version)."""
     try:
         team_id = int(player['team'])
         next_3gw = list(range(current_event, current_event + 3))
-        
         total_points = 0
         for gw in next_3gw:
-            # Get all fixtures for this team in this GW
-            team_fixtures = fixtures_df[
-                ((fixtures_df['team_h'] == team_id) | 
-                 (fixtures_df['team_a'] == team_id)) &
-                (fixtures_df['event'] == gw)
-            ]
-            
-            if team_fixtures.empty:
-                continue # BGW - add 0 points
-                
-            # For each fixture in GW (handles DGW)
+            team_fixtures = fixtures_df[((fixtures_df['team_h'] == team_id) | (fixtures_df['team_a'] == team_id)) & (fixtures_df['event'] == gw)]
+            if team_fixtures.empty: continue
             for _, fixture in team_fixtures.iterrows():
                 is_home = fixture['team_h'] == team_id
                 opp_team = fixture['team_a'] if is_home else fixture['team_h']
-                
-                # Get opponent strength
-                opp_str = teams_df.loc[
-                    teams_df['id'] == opp_team,
-                    'strength_overall_away' if is_home else 'strength_overall_home'
-                ].iloc[0]
-                
-                # Base points from predicted_points
-                base_points = float(player.get('pred_points', 0)) / 2.0
-                
-                # Adjust for opponent strength (normalized to 1.0 baseline)
+                opp_str = teams_df.loc[teams_df['id'] == opp_team, 'strength_overall_away' if is_home else 'strength_overall_home'].iloc[0]
+                base_points = float(player.get('pred_points', 0)) / 2.0 # Rough est per game
                 max_str = teams_df['strength_overall_home'].max()
                 fixture_diff = 1.0 - (opp_str / max_str)
-                
-                # Adjust points based on home/away and opponent
                 points = base_points * (1.1 if is_home else 0.9) * (1.0 + fixture_diff)
                 total_points += points
-        
         return total_points
-        
-    except Exception as e:
-        # Safe fallback - return base predicted points
+    except Exception:
         return float(player.get('pred_points', 0))
 
 def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int,
                       all_players: pd.DataFrame, strategy: str,
                       fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, 
                       current_event: int) -> List[Dict]:
-    """Greedy search for transfers based on the selected strategy.
-    Now includes 3-GW ROI calculation."""
-    
-    # Ensure squad IDs are valid
+    """Greedy search for transfers based on the selected strategy."""
     valid_squad_ids = [pid for pid in current_squad_ids if pid in all_players.index]
-    if not valid_squad_ids:
-        st.error("No valid players found in current squad for transfer suggestion.")
-        return []
+    if not valid_squad_ids: return []
 
     current_squad_df = all_players.loc[valid_squad_ids]
     start_ids, _ = optimize_starting_xi(current_squad_df)
-    if not start_ids:
-        st.error("Could not optimize starting XI for transfer suggestions.")
-        return []
-    base_sum = float(current_squad_df.loc[start_ids]['pred_points'].sum())
+    if not start_ids: return []
 
-    if strategy == "Free Transfer":
-        max_transfers = free_transfers
-        hit_cost = float('inf')
-    elif strategy == "Allow Hit (AI Suggest)":
-        max_transfers = 5
-        hit_cost = 4
-    else:  # Wildcard/Free Hit
-        max_transfers = 15
-        hit_cost = 0
+    if strategy == "Free Transfer": max_transfers, hit_cost = free_transfers, float('inf')
+    elif strategy == "Allow Hit (AI Suggest)": max_transfers, hit_cost = 5, 4
+    else: max_transfers, hit_cost = 15, 0
 
-    # Count current players per team
     current_team_count = {}
     for pid in valid_squad_ids:
-        team_id = int(all_players.loc[pid, 'team'])
-        current_team_count[team_id] = current_team_count.get(team_id, 0) + 1
+        tid = int(all_players.loc[pid, 'team'])
+        current_team_count[tid] = current_team_count.get(tid, 0) + 1
 
-    # Group squad by position (element_type): 1 GK, 2 DEF, 3 MID, 4 FWD
     position_groups = {1: [], 2: [], 3: [], 4: []}
     for pid in valid_squad_ids:
-        pos = int(all_players.loc[pid, 'element_type'])
-        position_groups.setdefault(pos, []).append(pid)
+        position_groups.setdefault(int(all_players.loc[pid, 'element_type']), []).append(pid)
 
-    remaining_bank = bank
-    used_in_players = set()
-    potential_moves = []
+    remaining_bank, used_in_players, potential_moves = bank, set(), []
 
-    # Iterate positions in typical order (DEF/MID/FWD/GK not too important)
     for pos in [1, 2, 3, 4]:
         out_ids = position_groups.get(pos, [])
-        if not out_ids:
-            continue
-
-        # consider weaker squad players first (ascending predicted points)
+        if not out_ids: continue
         for out_id in sorted(out_ids, key=lambda x: all_players.loc[x, 'pred_points']):
             out_player = all_players.loc[out_id]
             out_team_id = int(out_player['team'])
+            budget = out_player['selling_price'] + (remaining_bank * 10)
+            all_replacements = all_players[(all_players['element_type'] == out_player['element_type']) & (~all_players.index.isin(valid_squad_ids)) & (all_players['now_cost'] <= budget) & (all_players['pred_points'] > out_player['pred_points'])].sort_values('pred_points', ascending=False)
+            if all_replacements.empty: continue
 
-            # budget: player's selling price plus whatever cash we have (bank is in £ *10 in dataset)
-            budget_for_replacement = out_player['selling_price'] + (remaining_bank * 10)
-
-            # candidate pool: same position, not already in squad, within budget and better predicted points
-            all_replacements = all_players[
-                (all_players['element_type'] == out_player['element_type']) &
-                (~all_players.index.isin(valid_squad_ids)) &
-                (all_players['now_cost'] <= budget_for_replacement) &
-                (all_players['pred_points'] > out_player['pred_points'])
-            ].sort_values('pred_points', ascending=False)
-
-            if all_replacements.empty:
-                continue
-
-            best_replacement = None
-
-            # Try find a candidate respecting 3-per-team rule
+            best_replacement, best_replacement_id = None, None
             for cid, candidate in all_replacements.iterrows():
                 candidate_team_id = int(candidate['team'])
-
-                # simulate future team counts after swapping out_id -> cid
-                future_team_count = current_team_count.copy()
-                future_team_count[out_team_id] = future_team_count.get(out_team_id, 0) - 1
-                if future_team_count[out_team_id] <= 0:
-                    future_team_count.pop(out_team_id, None)
-
-                future_count = future_team_count.get(candidate_team_id, 0) + 1
-                if future_count > 3:
-                    # would violate 3-per-team -> skip candidate
-                    continue
-
-                # also skip if we already planned to bring this candidate in
-                if int(cid) in used_in_players:
-                    continue
-
-                # if passes checks, pick as best_replacement (first highest pred_points)
-                best_replacement = candidate
-                best_replacement_id = int(cid)
+                ftc = current_team_count.copy()
+                ftc[out_team_id] = ftc.get(out_team_id, 0) - 1
+                if ftc[out_team_id] <= 0: ftc.pop(out_team_id, None)
+                if ftc.get(candidate_team_id, 0) + 1 > 3: continue
+                if int(cid) in used_in_players: continue
+                best_replacement, best_replacement_id = candidate, int(cid)
                 break
 
-            # Fallback: try same-team replacements (if any)
-            if best_replacement is None:
-                # --- BUGFIX v1.6.2: Filter all_replacements, not all_players ---
-                same_team_replacements = all_replacements[
-                    (all_replacements['team'] == out_team_id) &
-                    (~all_replacements.index.isin(used_in_players))
-                ]
-                if not same_team_replacements.empty:
-                    # swapping within same team will not increase count for that team,
-                    # so it's safe even when currently at 3 players
-                    best_replacement = same_team_replacements.iloc[0]
-                    best_replacement_id = int(best_replacement.name)
+            if best_replacement is None: continue
 
-            if best_replacement is None:
-                continue
-
-            # Final team-limit double-check (safety net)
-            future_team_count = current_team_count.copy()
-            future_team_count[out_team_id] = future_team_count.get(out_team_id, 0) - 1
-            if future_team_count[out_team_id] <= 0:
-                future_team_count.pop(out_team_id, None)
-            if future_team_count.get(int(best_replacement['team']), 0) + 1 > 3:
-                continue
-
-            # cost change (in - out) in £ (dataset stores cost*10)
             cost_change = (best_replacement['now_cost'] - out_player['selling_price']) / 10.0
-            if cost_change > remaining_bank:
-                continue
+            if cost_change > remaining_bank: continue
 
-            # Update team counts and remaining bank as if we accepted this move (greedy)
             if out_team_id != int(best_replacement['team']):
                 current_team_count[out_team_id] = current_team_count.get(out_team_id, 0) - 1
-                if current_team_count[out_team_id] <= 0:
-                    current_team_count.pop(out_team_id, None)
+                if current_team_count[out_team_id] <= 0: current_team_count.pop(out_team_id, None)
                 current_team_count[int(best_replacement['team'])] = current_team_count.get(int(best_replacement['team']), 0) + 1
 
             remaining_bank = round(max(0.0, remaining_bank - cost_change), 2)
             used_in_players.add(best_replacement_id)
 
+            # Using new ROI function here if possible, or keep legacy for speed in loop
             roi_in = calculate_3gw_roi(best_replacement, fixtures_df, teams_df, current_event)
             roi_out = calculate_3gw_roi(out_player, fixtures_df, teams_df, current_event)
 
-            # build move dict (match keys used by the rest of the app
-            move = {
-                "out_id": int(out_id),
-                "in_id": best_replacement_id,
-                "out_name": out_player.get("web_name", ""),
-                "in_name": best_replacement.get("web_name", ""),
+            potential_moves.append({
+                "out_id": int(out_id), "in_id": best_replacement_id,
+                "out_name": out_player.get("web_name", ""), "in_name": best_replacement.get("web_name", ""),
                 "out_pos": POSITIONS.get(int(out_player["element_type"]), str(out_player["element_type"])),
                 "in_pos": POSITIONS.get(int(best_replacement["element_type"]), str(best_replacement["element_type"])),
-                "out_team": out_player.get("team_short", ""),
-                "in_team": best_replacement.get("team_short", ""),
+                "out_team": out_player.get("team_short", ""), "in_team": best_replacement.get("team_short", ""),
                 "in_points": float(best_replacement.get("pred_points", 0.0)),
                 "delta_points": float(best_replacement.get('pred_points', 0.0) - out_player.get('pred_points', 0.0)),
-                "roi_3gw": float(roi_in - roi_out), # NEW: 3 GW Expected Net Gain
-                "in_cost": float(best_replacement.get('now_cost', 0.0)) / 10.0,
-                "out_cost": float(out_player.get('selling_price', 0.0)) / 10.0,
-            }
+                "roi_3gw": float(roi_in - roi_out),
+                "in_cost": float(best_replacement.get('now_cost', 0.0)) / 10.0, "out_cost": float(out_player.get('selling_price', 0.0)) / 10.0,
+            })
 
-            # warning if after this move you'll have 3 players from that team (informational)
-            if current_team_count.get(int(best_replacement['team']), 0) == 3:
-                move["warning"] = f"Already have 3 players from {best_replacement.get('team_short','')}"
-
-            # ✅ Hard rule: absolutely forbid >3 per team
-            future_team_count = current_team_count.copy()
-            future_team_count[out_team_id] = future_team_count.get(out_team_id, 0) - 1
-            if future_team_count[out_team_id] <= 0:
-                future_team_count.pop(out_team_id, None)
-            if future_team_count.get(int(best_replacement['team']), 0) + 1 > 3:
-                continue  # skip this move, it would create 4th player from same team
-        
-            potential_moves.append(move)
-
-    # Rank moves by expected points gain
     potential_moves.sort(key=lambda x: x.get("delta_points", 0.0), reverse=True)
-
-    # --- START: v1.6.1 AGGRESSIVE AI LOGIC ---
     final_suggestions = []
-    
-    # Define thresholds
-    GREEDY_THRESHOLD = -2.0  # Allow net loss of 2.0 pts (i.e., delta_points > 2.0 for a -4 hit)
-    CONSERVATIVE_THRESHOLD = -0.1 # Must almost break even (for Free Transfer)
-
+    GREEDY_THRESHOLD, CONSERVATIVE_THRESHOLD = -2.0, -0.1
     for i, move in enumerate(potential_moves):
-        if len(final_suggestions) >= max_transfers:
-            break
-
+        if len(final_suggestions) >= max_transfers: break
         hit = 0 if len(final_suggestions) < free_transfers else hit_cost
-        
-        # Calculate pure net gain (profit)
         net_gain = move["delta_points"] - hit
-
-        # Create the move object
-        m = move.copy()
-        m['net_gain'] = round(net_gain, 2)
-        m['hit_cost'] = hit
-
-        # Apply strategy-based filtering
-        if strategy == "Free Transfer":
-            # Conservative: Only accept moves that don't cost points.
-            if net_gain >= CONSERVATIVE_THRESHOLD:
-                final_suggestions.append(m)
-        
-        elif strategy == "Allow Hit (AI Suggest)":
-            # Aggressive: Accept any move that doesn't lose us *too many* points.
-            if net_gain >= GREEDY_THRESHOLD:
-                final_suggestions.append(m)
-
-        elif strategy == "Wildcard / Free Hit":
-            # Wildcard: hit_cost is 0, so net_gain = delta_points.
-            # Accept all positive moves up to the max transfer limit (15).
-            if net_gain > 0.0:
-                final_suggestions.append(m)
-    
-    # --- END: v1.6.1 AGGRESSIVE AI LOGIC ---
+        m = move.copy(); m['net_gain'] = round(net_gain, 2); m['hit_cost'] = hit
+        if strategy == "Free Transfer" and net_gain >= CONSERVATIVE_THRESHOLD: final_suggestions.append(m)
+        elif strategy == "Allow Hit (AI Suggest)" and net_gain >= GREEDY_THRESHOLD: final_suggestions.append(m)
+        elif strategy == "Wildcard / Free Hit" and net_gain > 0.0: final_suggestions.append(m)
 
     return final_suggestions
 
@@ -1825,7 +1808,7 @@ def display_home_dashboard(
 
 def main():
     # st.set_page_config(page_title="FPL WIZ จัดตัวนักเตะ", layout="wide") # Moved to top
-    st.title("🏟️ FPL WIZ จัดตัวนักเตะด้วย AI | FPL WIZ AI-Powered 🤖")
+    st.title("🏟️ FPL WIZ AI-Powered v2.0 FULL 🤖")
     st.markdown("เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ FPL ในแต่ละสัปดาห์ 🧠")
     
     # Add CSS for table styling
@@ -1965,11 +1948,16 @@ def main():
     # --- โค้ดที่เพิ่มใหม่เพื่อแสดงข้อมูล DGW/BGW (ย้ายมาตรงนี้เพื่อให้ข้อมูล 'nf' พร้อมใช้) ---
     nf = next_fixture_features(fixtures_df, teams, target_event)
     
-    feat = engineer_features(elements, teams, nf)
-    feat.set_index('id', inplace=True)
-    feat["pred_points"] = feat["pred_points_heur"]
+    # --- NEW (v2.0): Get Understat data BEFORE engineering features ---
+    us_players, us_teams = get_understat_data()
 
-    # --- START: Create player search map for simulation ---
+    # --- NEW (v2.0): Use Enhanced Feature Engineering ---
+    feat = engineer_features_enhanced(elements, teams, nf, us_players)
+    feat.set_index('id', inplace=True)
+    # Map enhanced prediction to standard column for compatibility
+    feat["pred_points"] = feat["pred_points_enhanced"]
+
+    # --- START: Create player search map for simulation & ROI ---
     # We need a stable list for selectbox options, sorted by name
     feat_sorted = feat.sort_values('web_name')
     player_search_map = {
@@ -1994,8 +1982,7 @@ def main():
             opponent_matrix, difficulty_matrix = get_fixture_difficulty_matrix(fixtures_df, teams, target_event)
             rotation_pairs = find_rotation_pairs(difficulty_matrix, teams, feat)
 
-            # --- NEW (v1.9.7): Get Understat Data ---
-            us_players, us_teams = get_understat_data()
+            # --- NEW (v1.9.7): Merge Understat Data for Dashboard ---
             merged_us_players, merged_us_teams = merge_understat_data(
                 us_players, us_teams, feat, teams
             )
@@ -2155,7 +2142,7 @@ def main():
                     bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
                     display_user_friendly_table(
                         df=bench_display_df,
-                        title="ตัวสำรอง (เรียงตามลำดับ)",
+                        title="🧘🏻‍♀️ตัวสำรอง(Bench)",
                         height=175
                     )
                     
@@ -2268,10 +2255,53 @@ def main():
                             bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
                             display_user_friendly_table(
                                 df=bench_display_df,
-                                title="ตัวสำรอง (เรียงตามลำดับ)",
+                                title="🧘🏻‍♀️ ตัวสำรอง (bench) - เรียงตามลำดับ",
                                 height=175
                             )
                     
+                    # --- NEW (v2.0): Transfer ROI Calculator (Inserted here) ---
+                    st.markdown("---")
+                    st.subheader("🧮 คำนวณความคุ้มค่าการย้ายตัว (Transfer ROI Calculator)")
+                    st.markdown("💡 เลือกนักเตะที่มีแทนด้วยนักเตะที่ต้องการ จะประเมินความคุ้มค่าให้ใน 3 นัดถัดไปและค่า Hit ที่อาจเกิดขึ้น")
+                    with st.expander("คลิกเพื่อเปิดเครื่องมือคำนวณ (3-GW Projection)", expanded=True):
+                        col_out, col_in, col_hit = st.columns([2, 2, 1])
+                        with col_out:
+                            # Default index to first player in squad if possible
+                            default_out_idx = 0
+                            if valid_pick_ids:
+                                first_squad_player = player_id_to_name_map.get(valid_pick_ids[0])
+                                if first_squad_player in all_player_name_options:
+                                     default_out_idx = all_player_name_options.index(first_squad_player)
+
+                            p_out_name = st.selectbox("Player OUT (ขายออก)", options=all_player_name_options, index=default_out_idx, key="roi_out")
+                            p_out_id = player_search_map[p_out_name]
+                        with col_in:
+                            p_in_name = st.selectbox("Player IN (ซื้อเข้า)", options=all_player_name_options, key="roi_in")
+                            p_in_id = player_search_map[p_in_name]
+                        with col_hit:
+                            hit_val = st.radio("เสียแต้มลบ (-4)?", [0, 4], horizontal=True, help="ถ้าเป็นการย้ายที่เกินโควต้าฟรี ให้เลือก 4")
+
+                        if st.button("คำนวณความคุ้มค่า (Calculate ROI)", type="primary", use_container_width=True):
+                            roi_data = calculate_transfer_roi(p_out_id, p_in_id, target_event, feat, fixtures_df, teams, hit_cost=hit_val)
+                            
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric(f"OUT: {feat.loc[p_out_id, 'web_name']}", f"{roi_data['out_xp_3gw']:.1f} pts", help="คะแนนคาดการณ์รวม 3 นัดถัดไป")
+                            c2.metric(f"IN: {feat.loc[p_in_id, 'web_name']}", f"{roi_data['in_xp_3gw']:.1f} pts", help="คะแนนคาดการณ์รวม 3 นัดถัดไป")
+                            
+                            delta = roi_data['net_gain']
+                            delta_color = "normal"
+                            if delta > 0.5: delta_color = "off" # Green-ish in standard theme if positive
+                            elif delta < 0: delta_color = "inverse" # Red-ish
+
+                            c3.metric("Net Gain (3 GWs)", f"{delta:+.1f} pts", delta=delta, help="ผลต่างคะแนนสุทธิหลังหักลบค่า Hit แล้ว")
+                            
+                            if roi_data['is_worth_it']:
+                                st.success("✅ **แนะนำให้เปลี่ยน!** มีโอกาสคุ้มค่าในระยะยาว (3 นัดขึ้นไป)")
+                            elif delta > 0:
+                                st.warning("⚠️ **เปลี่ยนได้แต่ต้องลุ้น** คุ้มทุนเล็กน้อย แต่อาจมีความเสี่ยง")
+                            else:
+                                st.error("❌ **ไม่แนะนำ** น่าจะไม่คุ้มที่จะเปลี่ยนตอนนี้")
+
                     st.markdown("---")
                     
 
@@ -2301,15 +2331,23 @@ def main():
                             total_in = normal_df['in_cost'].sum()
                             st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
                             
+                            # --- Added 3-GW ROI column to display ---
+                            cols_to_ren = {
+                                "out_name": "ขายออก (Out)",
+                                "out_cost": "ราคาขาย (£)",
+                                "in_name": "ซื้อเข้า (In)",
+                                "in_cost": "ราคาซื้อ (£)",
+                                "in_points": "คะแนนคาดการณ์ (Pred Points)",
+                                "roi_3gw": "กำไร 3 นัด (3-GW Gain)" # New Column
+                            }
+                            
+                            normal_display = normal_df.rename(columns=cols_to_ren)
+                            # Ensure columns exist before selecting
+                            final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)", "กำไร 3 นัด (3-GW Gain)"] if c in normal_display.columns]
+
                             dynamic_height = 45 + (len(normal_df) * 35)
                             display_user_friendly_table(
-                                df=normal_df.rename(columns={
-                                    "out_name": "ขายออก (Out)",
-                                    "out_cost": "ราคาขาย (£)",
-                                    "in_name": "ซื้อเข้า (In)",
-                                    "in_cost": "ราคาซื้อ (£)",
-                                    "in_points": "คะแนนคาดการณ์ (Pred Points)"
-                                })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
+                                df=normal_display[final_cols],
                                 title="",
                                 height=dynamic_height
                             )
@@ -2327,15 +2365,20 @@ def main():
                             total_in_c = conservative_df['in_cost'].sum()
                             st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
                             
+                            cols_to_ren_c = {
+                                "out_name": "ขายออก (Out)",
+                                "out_cost": "ราคาขาย (£)",
+                                "in_name": "ซื้อเข้า (In)",
+                                "in_cost": "ราคาซื้อ (£)",
+                                "in_points": "คะแนนคาดการณ์ (Pred Points)",
+                                "roi_3gw": "กำไร 3 นัด (3-GW Gain)" # New Column
+                            }
+                            conservative_display = conservative_df.rename(columns=cols_to_ren_c)
+                            final_cols_c = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)", "กำไร 3 นัด (3-GW Gain)"] if c in conservative_display.columns]
+
                             dynamic_height_c = 45 + (len(conservative_df) * 35)
                             display_user_friendly_table(
-                                df=conservative_df.rename(columns={
-                                    "out_name": "ขายออก (Out)",
-                                    "out_cost": "ราคาขาย (£)",
-                                    "in_name": "ซื้อเข้า (In)",
-                                    "in_cost": "ราคาซื้อ (£)",
-                                    "in_points": "คะแนนคาดการณ์ (Pred Points)"
-                                })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
+                                df=conservative_display[final_cols_c],
                                 title="",
                                 height=dynamic_height_c
                             )
