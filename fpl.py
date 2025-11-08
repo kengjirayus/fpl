@@ -20,7 +20,7 @@ Notes
 - This app reads public FPL endpoints. No login required.
 """
 ###############################
-# V1.9.8 - Re-Order landing Page
+# V1.9.9 - Add Understat Integration
 ###############################
 
 import os
@@ -836,7 +836,7 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
             pairs.append({
                 'GK1': f"{gk1['web_name']} ({gk1['price']:.1f}m)",
                 'GK2': f"{gk2['web_name']} ({gk2['price']:.1f}m)",
-                'Total Cost': gk1['price'] + gk2['price'],
+                'Total Cost': rotation_score,
                 'Rotation Score': rotation_score
             })
 
@@ -885,14 +885,58 @@ def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], Lis
         # Return empty lists if no optimal solution found
         return [], []
 
+def calculate_3gw_roi(player, fixtures_df, teams_df, current_event):
+    """Calculate expected points over next 3 GWs for ROI analysis."""
+    try:
+        team_id = int(player['team'])
+        next_3gw = list(range(current_event, current_event + 3))
+        
+        total_points = 0
+        for gw in next_3gw:
+            # Get all fixtures for this team in this GW
+            team_fixtures = fixtures_df[
+                ((fixtures_df['team_h'] == team_id) | 
+                 (fixtures_df['team_a'] == team_id)) &
+                (fixtures_df['event'] == gw)
+            ]
+            
+            if team_fixtures.empty:
+                continue # BGW - add 0 points
+                
+            # For each fixture in GW (handles DGW)
+            for _, fixture in team_fixtures.iterrows():
+                is_home = fixture['team_h'] == team_id
+                opp_team = fixture['team_a'] if is_home else fixture['team_h']
+                
+                # Get opponent strength
+                opp_str = teams_df.loc[
+                    teams_df['id'] == opp_team,
+                    'strength_overall_away' if is_home else 'strength_overall_home'
+                ].iloc[0]
+                
+                # Base points from predicted_points
+                base_points = float(player.get('pred_points', 0)) / 2.0
+                
+                # Adjust for opponent strength (normalized to 1.0 baseline)
+                max_str = teams_df['strength_overall_home'].max()
+                fixture_diff = 1.0 - (opp_str / max_str)
+                
+                # Adjust points based on home/away and opponent
+                points = base_points * (1.1 if is_home else 0.9) * (1.0 + fixture_diff)
+                total_points += points
+        
+        return total_points
+        
+    except Exception as e:
+        # Safe fallback - return base predicted points
+        return float(player.get('pred_points', 0))
+
 def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers: int,
-                      all_players: pd.DataFrame,
-                      strategy: str) -> List[Dict]:
+                      all_players: pd.DataFrame, strategy: str,
+                      fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, 
+                      current_event: int) -> List[Dict]:
     """Greedy search for transfers based on the selected strategy.
-    Returns a list of move dicts with keys used by the rest of the app
-    (out_id, in_id, in_name, out_cost, in_cost, delta_points, warning, ...).
-    Enforces max 3 players per Premier League team.
-    """
+    Now includes 3-GW ROI calculation."""
     
     # Ensure squad IDs are valid
     valid_squad_ids = [pid for pid in current_squad_ids if pid in all_players.index]
@@ -950,7 +994,7 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
             # candidate pool: same position, not already in squad, within budget and better predicted points
             all_replacements = all_players[
                 (all_players['element_type'] == out_player['element_type']) &
-                (~all_players.index.isin(valid_squad_ids)) & # Use valid_squad_ids
+                (~all_players.index.isin(valid_squad_ids)) &
                 (all_players['now_cost'] <= budget_for_replacement) &
                 (all_players['pred_points'] > out_player['pred_points'])
             ].sort_values('pred_points', ascending=False)
@@ -1023,7 +1067,10 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
             remaining_bank = round(max(0.0, remaining_bank - cost_change), 2)
             used_in_players.add(best_replacement_id)
 
-            # build move dict (match keys used elsewhere)
+            roi_in = calculate_3gw_roi(best_replacement, fixtures_df, teams_df, current_event)
+            roi_out = calculate_3gw_roi(out_player, fixtures_df, teams_df, current_event)
+
+            # build move dict (match keys used by the rest of the app
             move = {
                 "out_id": int(out_id),
                 "in_id": best_replacement_id,
@@ -1035,6 +1082,7 @@ def suggest_transfers(current_squad_ids: List[int], bank: float, free_transfers:
                 "in_team": best_replacement.get("team_short", ""),
                 "in_points": float(best_replacement.get("pred_points", 0.0)),
                 "delta_points": float(best_replacement.get('pred_points', 0.0) - out_player.get('pred_points', 0.0)),
+                "roi_3gw": float(roi_in - roi_out), # NEW: 3 GW Expected Net Gain
                 "in_cost": float(best_replacement.get('now_cost', 0.0)) / 10.0,
                 "out_cost": float(out_player.get('selling_price', 0.0)) / 10.0,
             }
@@ -1125,10 +1173,14 @@ def optimize_wildcard_team(all_players: pd.DataFrame, budget: float) -> Optional
     return None
 
 def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_transfers: int,
-                              all_players: pd.DataFrame, strategy: str) -> Tuple[List[Dict], List[Dict]]:
+                              all_players: pd.DataFrame, strategy: str,
+                              fixtures_df: pd.DataFrame, teams_df: pd.DataFrame, 
+                              current_event: int) -> Tuple[List[Dict], List[Dict]]:
     """แนะนำ transfers แบบ 2 มุมมอง: ปกติ vs ระมัดระวัง"""
     # การแนะนำแบบปกติ
-    normal_moves = suggest_transfers(current_squad_ids, bank, free_transfers, all_players, strategy)
+    normal_moves = suggest_transfers(current_squad_ids, bank, free_transfers, 
+                                   all_players, strategy,
+                                   fixtures_df, teams_df, current_event)
     
     # การแนะนำแบบระมัดระวัง
     conservative_all_players = all_players.copy()
@@ -1155,7 +1207,10 @@ def suggest_transfers_enhanced(current_squad_ids: List[int], bank: float, free_t
         conservative_bank,  # ใช้งบที่ปรับแล้ว
         free_transfers,
         conservative_all_players,
-        strategy
+        strategy,
+        fixtures_df,      # Add these new arguments
+        teams_df,         # Add these new arguments
+        current_event     # Add these new arguments
     )
     
     # กรองเฉพาะ transfers ที่แน่ใจว่าทำได้
@@ -2222,89 +2277,80 @@ def main():
 
                     # --- Original Transfer Suggestion Section ---
                     st.subheader("🔄 Suggested Transfers (Based on API Team)")
-                    st.markdown(f"💡 คำแนะนำซื้อขายนักเตะจากทีมคุณ (ข้อมูลจาก API) ⚠️ *เนื่องจากข้อจำกัดของ FPL API เราแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
+                    st.markdown(f"⚠️ *เนื่องจากข้อจำกัดของ FPL API เรื่องราคาขายอาจไม่ตรงกัน เลยแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
                     with st.spinner("Analyzing potential transfers..."):
                         normal_moves, conservative_moves = suggest_transfers_enhanced(
-                            valid_pick_ids, bank=bank, free_transfers=free_transfers,
-                            all_players=feat, strategy=transfer_strategy
+                            current_squad_ids=valid_pick_ids,
+                            bank=bank,
+                            free_transfers=free_transfers,
+                            all_players=feat,
+                            strategy=transfer_strategy,
+                            fixtures_df=fixtures_df,
+                            teams_df=teams,
+                            current_event=target_event
                         )
 
-                    if not normal_moves and not conservative_moves:
-                        st.write("⚠️ ไม่มีคำแนะนำการซื้อขายนักเตะ ลองเปลี่ยนกลยุทธ์หรือเพิ่ม Free Transfer")
-                    
-                    else:
-                        col1, col2 = st.columns(2)
+                        # Display normal suggestions
+                        st.markdown("#### 🔄 แนะนำแบบปกติ")
+                        if normal_moves:
+                            normal_df = pd.DataFrame(normal_moves)
+                            normal_df = normal_df.reset_index(drop=True)
+                            normal_df.index = normal_df.index + 1
+                            normal_df.index.name = "ลำดับ"
+                            total_out = normal_df['out_cost'].sum()
+                            total_in = normal_df['in_cost'].sum()
+                            st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
+                            
+                            dynamic_height = 45 + (len(normal_df) * 35)
+                            display_user_friendly_table(
+                                df=normal_df.rename(columns={
+                                    "out_name": "ขายออก (Out)",
+                                    "out_cost": "ราคาขาย (£)",
+                                    "in_name": "ซื้อเข้า (In)",
+                                    "in_cost": "ราคาซื้อ (£)",
+                                    "in_points": "คะแนนคาดการณ์ (Pred Points)"
+                                })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
+                                title="",
+                                height=dynamic_height
+                            )
+                        else:
+                            st.write("ไม่มีการแนะนำแบบปกติ")
+
+                        # Display conservative suggestions
+                        st.markdown("#### 🛡️ แนะนำแบบระมัดระวัง")
+                        if conservative_moves:
+                            conservative_df = pd.DataFrame(conservative_moves)
+                            conservative_df = conservative_df.reset_index(drop=True)
+                            conservative_df.index = conservative_df.index + 1
+                            conservative_df.index.name = "ลำดับ"
+                            total_out_c = conservative_df['out_cost'].sum()
+                            total_in_c = conservative_df['in_cost'].sum()
+                            st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
+                            
+                            dynamic_height_c = 45 + (len(conservative_df) * 35)
+                            display_user_friendly_table(
+                                df=conservative_df.rename(columns={
+                                    "out_name": "ขายออก (Out)",
+                                    "out_cost": "ราคาขาย (£)",
+                                    "in_name": "ซื้อเข้า (In)",
+                                    "in_cost": "ราคาซื้อ (£)",
+                                    "in_points": "คะแนนคาดการณ์ (Pred Points)"
+                                })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
+                                title="",
+                                height=dynamic_height_c
+                            )
+                            st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
+                        else:
+                            st.write("ไม่มีการแนะนำแบบระมัดระวัง")
                         
-                        # =========================
-                        # ตารางข้อเสนอหลัก (normal)
-                        # =========================
-                        with col1:
-                            st.markdown("#### 📊 ข้อเสนอหลัก (ราคาปัจจุบัน)")
-                            if normal_moves:
-                                normal_df = pd.DataFrame(normal_moves)
-                                normal_df.index = np.arange(1, len(normal_df) + 1)
-                                
-                                total_in = normal_df['in_cost'].sum()
-                                total_out = normal_df['out_cost'].sum()
-                                st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
-                                
-                                # คำนวณความสูงไดนามิก
-                                dynamic_height = 45 + (len(normal_df) * 35) 
-                                
-                                display_user_friendly_table(
-                                    df=normal_df.rename(columns={
-                                        "out_name": "ขายออก (Out)",
-                                        "out_cost": "ราคาขาย (£)",
-                                        "in_name": "ซื้อเข้า (In)",
-                                        "in_cost": "ราคาซื้อ (£)",
-                                        "in_points": "คะแนนคาดการณ์ (Pred Points)"
-                                    })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
-                                    title="",
-                                    height=dynamic_height
-                                )
-                            else:
-                                st.write("ไม่มีการแนะนำ")
-                        
-                        # =============================
-                        # ตารางข้อเสนอสำรอง (conserve)
-                        # =============================
-                        with col2:
-                            st.markdown("#### 🛡️ ข้อเสนอสำรอง (ปรับราคาขายลง)")
-                            if conservative_moves:
-                                conservative_df = pd.DataFrame(conservative_moves)
-                                conservative_df.index = np.arange(1, len(conservative_df) + 1)
-                                
-                                total_in_c = conservative_df['in_cost'].sum()
-                                total_out_c = conservative_df['out_cost'].sum()
-                                st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
-                                
-                                # คำนวณความสูงไดนามิก
-                                dynamic_height_c = 45 + (len(conservative_df) * 35)
-                                
-                                display_user_friendly_table(
-                                    df=conservative_df.rename(columns={
-                                        "out_name": "ขายออก (Out)",
-                                        "out_cost": "ราคาขาย (£)",
-                                        "in_name": "ซื้อเข้า (In)",
-                                        "in_cost": "ราคาซื้อ (£)",
-                                        "in_points": "คะแนนคาดการณ์ (Pred Points)"
-                                    })[["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)"]],
-                                    title="",
-                                    height=dynamic_height_c
-                                )
-                                
-                                st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
-                            else:
-                                st.write("ไม่มีการแนะนำที่ปลอดภัยพอ")
-                        
-                        # เพิ่มคำเตือน
+                        # Add warning
                         st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
                     
                     st.markdown("---")
                     
                     # --- START: NEW SIMULATION SECTION (MOVED) ---
                     st.subheader("🛠️ ทดลองจัดทีม (Simulation Mode)")
-                    st.markdown("ใช้ส่วนนี้เพื่อจำลองการย้ายทีมของคุณ *หลังจาก* ที่คุณกดยืนยันใน FPL แล้ว แต่ API ยังไม่อัปเดต")
+                    st.markdown("ใช้ส่วนนี้เพื่อจำลองการย้ายทีมของคุณ *หลังจาก* ที่คุณกดยืนยันใน FPL แล้ว แต่ในนี้ยังไม่อัปเดตตาม")
                     
                     if st.button("♻️ Reset to Current API Team"):
                         st.session_state.simulated_squad_ids = valid_pick_ids # Use valid_pick_ids
