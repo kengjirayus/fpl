@@ -1808,7 +1808,7 @@ def display_home_dashboard(
 
 def main():
     # st.set_page_config(page_title="FPL WIZ จัดตัวนักเตะ", layout="wide") # Moved to top
-    st.title("🏟️ FPL WIZ AI-Powered v2.0 FULL 🤖")
+    st.title("🏟️ FPL WIZ จัดตัวนักเตะด้วย AI | FPL WIZ AI-Powered 🤖")
     st.markdown("เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ FPL ในแต่ละสัปดาห์ 🧠")
     
     # Add CSS for table styling
