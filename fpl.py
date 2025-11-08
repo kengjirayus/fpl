@@ -1901,6 +1901,9 @@ def main():
     
     bootstrap = get_bootstrap()
     fixtures = get_fixtures()
+    if not bootstrap or "elements" not in bootstrap:
+        st.error("⚠️ FPL API กำลังปิดปรับปรุงชั่วคราว (Game is updating). กรุณารอสักครู่แล้วลองใหม่ครับ")
+        st.stop()
     elements, teams, events, fixtures_df = build_master_tables(bootstrap, fixtures)
     cur_event, next_event = current_and_next_event(bootstrap.get("events", []))
     
@@ -2038,6 +2041,10 @@ def main():
             # 2. If ID is valid, proceed with main data fetching and logic
             try:
                 entry = get_entry(entry_id)
+                if not entry or 'name' not in entry:
+                     st.error(f"ไม่สามารถดึงข้อมูลทีม ID {entry_id} ได้ในขณะนี้ (API อาจกำลังอัปเดต หรือ ID ไม่ถูกต้อง)")
+                     st.session_state.analysis_submitted = False
+                     st.stop()
                 ev_for_picks = cur_event or 1
                 picks = get_entry_picks(entry_id, ev_for_picks)
 
