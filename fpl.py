@@ -2146,10 +2146,15 @@ def main():
                     ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                     ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                     
-                    bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
+                                # --- ปรับปรุง Bench Display (เริ่ม) ---
+                    bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']].copy()
+                    bench_display_df.reset_index(drop=True, inplace=True)
+                    bench_display_df.index = bench_display_df.index + 1
+                                    # --- ปรับปรุง Bench Display (จบ) ---
+
                     display_user_friendly_table(
                         df=bench_display_df,
-                        title="🧘🏻‍♀️ตัวสำรอง(Bench)",
+                        title="ตัวสำรอง (Simulated Team - เรียงตามลำดับ)",
                         height=175
                     )
                     
@@ -2259,10 +2264,15 @@ def main():
                             ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                             ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                             
-                            bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
+                                # --- ปรับปรุง Bench Display (เริ่ม) ---
+                            bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']].copy()
+                            bench_display_df.reset_index(drop=True, inplace=True)
+                            bench_display_df.index = bench_display_df.index + 1
+                                # --- ปรับปรุง Bench Display (จบ) ---
+
                             display_user_friendly_table(
                                 df=bench_display_df,
-                                title="🧘🏻‍♀️ ตัวสำรอง (bench) - เรียงตามลำดับ",
+                                title="ตัวสำรอง (Simulated Team - เรียงตามลำดับ)",
                                 height=175
                             )
                     
@@ -2600,7 +2610,12 @@ def main():
                                 ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                                 ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                                 
-                                bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']]
+                                                                # --- ปรับปรุง Bench Display (เริ่ม) ---
+                                bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']].copy()
+                                bench_display_df.reset_index(drop=True, inplace=True)
+                                bench_display_df.index = bench_display_df.index + 1
+                                # --- ปรับปรุง Bench Display (จบ) ---
+
                                 display_user_friendly_table(
                                     df=bench_display_df,
                                     title="ตัวสำรอง (Simulated Team - เรียงตามลำดับ)",
