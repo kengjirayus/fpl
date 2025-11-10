@@ -859,7 +859,12 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
     """
     Finds the best GK rotation pairs within a budget for the next 5 GWs.
     """
-    gks = all_players[all_players['element_type'] == 1].copy()
+        # กรองเฉพาะ GK ที่มีโอกาสลงเล่นสูง (>75%) หรือมีคะแนนคาดการณ์ > 0.5 เพื่อป้องกันตัวสำรองที่ไม่เคยลง
+    gks = all_players[
+        (all_players['element_type'] == 1) & 
+        ((all_players['chance_of_playing_next_round'] > 75) | (all_players['pred_points'] > 0.5))
+    ].copy()
+    
     gks['price'] = gks['now_cost'] / 10.0
     gks['team_short'] = gks['team'].map(teams_df.set_index('id')['short_name'])
 
