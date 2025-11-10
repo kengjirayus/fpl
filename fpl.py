@@ -2266,48 +2266,82 @@ def main():
                                 height=175
                             )
                     
-                    # --- NEW (v2.0): Transfer ROI Calculator (Inserted here) ---
+                    # --- NEW (v2.0): Transfer ROI Calculator (Improved Logic) ---
                     st.markdown("---")
                     st.subheader("🧮 คำนวณความคุ้มค่าการย้ายตัว (Transfer ROI Calculator)")
-                    st.markdown("💡 เลือกนักเตะที่มีแทนด้วยนักเตะที่ต้องการ จะประเมินความคุ้มค่าให้ใน 3 นัดถัดไปและค่า Hit ที่อาจเกิดขึ้น")
+                    st.markdown("💡 เลือกนักเตะจากทีมของคุณเพื่อขายออก (OUT) ระบบจะกรองนักเตะตำแหน่งเดียวกันมาให้เลือกซื้อเข้า (IN) เพื่อเปรียบเทียบคะแนน 3 นัดล่วงหน้า")
+                    
                     with st.expander("คลิกเพื่อเปิดเครื่องมือคำนวณ (3-GW Projection)", expanded=True):
+                        # 1. เตรียมข้อมูลสำหรับ Dropdown Player OUT (เฉพาะ 15 คนในทีม)
+                        # ใช้ list comprehension สร้างรายการชื่อจาก ID นักเตะในทีมปัจจุบัน
+                        squad_options = [player_id_to_name_map[pid] for pid in valid_pick_ids if pid in player_id_to_name_map]
+                        
                         col_out, col_in, col_hit = st.columns([2, 2, 1])
+                        
+                        # --- Player OUT Selection ---
                         with col_out:
-                            # Default index to first player in squad if possible
-                            default_out_idx = 0
-                            if valid_pick_ids:
-                                first_squad_player = player_id_to_name_map.get(valid_pick_ids[0])
-                                if first_squad_player in all_player_name_options:
-                                     default_out_idx = all_player_name_options.index(first_squad_player)
-
-                            p_out_name = st.selectbox("Player OUT (ขายออก)", options=all_player_name_options, index=default_out_idx, key="roi_out")
+                            p_out_name = st.selectbox(
+                                "🔴 Player OUT (เลือกจากทีมปัจจุบัน)", 
+                                options=squad_options, 
+                                key="roi_out_restricted"
+                            )
+                            # หา ID จากชื่อที่เลือก
                             p_out_id = player_search_map[p_out_name]
-                        with col_in:
-                            p_in_name = st.selectbox("Player IN (ซื้อเข้า)", options=all_player_name_options, key="roi_in")
-                            p_in_id = player_search_map[p_in_name]
-                        with col_hit:
-                            hit_val = st.radio("เสียแต้มลบ (-4)?", [0, 4], horizontal=True, help="ถ้าเป็นการย้ายที่เกินโควต้าฟรี ให้เลือก 4")
+                            # หาตำแหน่งของนักเตะที่เลือก (1=GK, 2=DEF, 3=MID, 4=FWD)
+                            out_player_pos_id = feat.loc[p_out_id, 'element_type']
+                            out_player_pos_name = POSITIONS.get(out_player_pos_id, "")
 
+                        # --- Player IN Selection (Dynamic Filtering) ---
+                        with col_in:
+                            # กรองเฉพาะนักเตะที่ตำแหน่งตรงกับคนที่จะขายออก (และไม่ใช่คนเดิม)
+                            filtered_in_df = feat[
+                                (feat['element_type'] == out_player_pos_id) & 
+                                (feat.index != p_out_id)
+                            ].sort_values('web_name')
+                            
+                            # สร้าง options ใหม่สำหรับขาเข้าตามตำแหน่งที่กรองแล้ว
+                            in_player_options = [
+                                f"{row['web_name']} ({row['team_short']}) - £{row['now_cost']/10.0}m"
+                                for idx, row in filtered_in_df.iterrows()
+                            ]
+                            
+                            p_in_name = st.selectbox(
+                                f"🟢 Player IN (เฉพาะตำแหน่ง {out_player_pos_name})", 
+                                options=in_player_options,
+                                key="roi_in_restricted"
+                            )
+                            p_in_id = player_search_map[p_in_name]
+
+                        # --- Hit Selection ---
+                        with col_hit:
+                            hit_val = st.radio(
+                                "เสียแต้มลบ (-4)?", 
+                                [0, 4], 
+                                horizontal=True, 
+                                key="roi_hit_val",
+                                help="เลือก 4 ถ้าการย้ายตัวนี้ทำให้คุณติดลบ"
+                            )
+
+                        # --- Calculation Button & Result ---
                         if st.button("คำนวณความคุ้มค่า (Calculate ROI)", type="primary", use_container_width=True):
                             roi_data = calculate_transfer_roi(p_out_id, p_in_id, target_event, feat, fixtures_df, teams, hit_cost=hit_val)
                             
+                            # แสดงผลลัพธ์
+                            st.markdown(f"##### ผลการวิเคราะห์: {out_player_pos_name} Transfer")
                             c1, c2, c3 = st.columns(3)
-                            c1.metric(f"OUT: {feat.loc[p_out_id, 'web_name']}", f"{roi_data['out_xp_3gw']:.1f} pts", help="คะแนนคาดการณ์รวม 3 นัดถัดไป")
-                            c2.metric(f"IN: {feat.loc[p_in_id, 'web_name']}", f"{roi_data['in_xp_3gw']:.1f} pts", help="คะแนนคาดการณ์รวม 3 นัดถัดไป")
+                            c1.metric(f"🔴 OUT: {feat.loc[p_out_id, 'web_name']}", f"{roi_data['out_xp_3gw']:.1f} pts", help="คะแนนคาดการณ์รวม 3 นัดถัดไป")
+                            c2.metric(f"🟢 IN: {feat.loc[p_in_id, 'web_name']}", f"{roi_data['in_xp_3gw']:.1f} pts", help="คะแนนคาดการณ์รวม 3 นัดถัดไป")
                             
                             delta = roi_data['net_gain']
-                            delta_color = "normal"
-                            if delta > 0.5: delta_color = "off" # Green-ish in standard theme if positive
-                            elif delta < 0: delta_color = "inverse" # Red-ish
-
                             c3.metric("Net Gain (3 GWs)", f"{delta:+.1f} pts", delta=delta, help="ผลต่างคะแนนสุทธิหลังหักลบค่า Hit แล้ว")
                             
+                            # คำแนะนำสรุป
                             if roi_data['is_worth_it']:
-                                st.success("✅ **แนะนำให้เปลี่ยน!** มีโอกาสคุ้มค่าในระยะยาว (3 นัดขึ้นไป)")
+                                st.success(f"✅ **แนะนำให้เปลี่ยน!** {feat.loc[p_in_id, 'web_name']} น่าจะทำแต้มได้มากกว่าในระยะยาว (3 นัด)")
                             elif delta > 0:
-                                st.warning("⚠️ **เปลี่ยนได้แต่ต้องลุ้น** คุ้มทุนเล็กน้อย แต่อาจมีความเสี่ยง")
+                                st.warning(f"⚠️ **เปลี่ยนได้แต่มีความเสี่ยง** คุ้มทุนเพียงเล็กน้อย ({delta:+.1f} แต้ม)")
                             else:
-                                st.error("❌ **ไม่แนะนำ** น่าจะไม่คุ้มที่จะเปลี่ยนตอนนี้")
+                                st.error(f"❌ **ไม่แนะนำ** {feat.loc[p_out_id, 'web_name']} ยังน่าจะทำแต้มได้ดีกว่า หรือไม่คุ้มค่า Hit")
 
                     st.markdown("---")
                     
