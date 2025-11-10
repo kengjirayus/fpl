@@ -2324,16 +2324,20 @@ def main():
 
                         # --- Hit Selection ---
                         with col_hit:
-                            hit_val = st.radio(
-                                "เสียแต้มลบ (-4)?", 
-                                [0, 4], 
-                                horizontal=True, 
+                            # เปลี่ยน options เป็นข้อความที่เข้าใจง่าย
+                            hit_option = st.radio(
+                                "การย้ายตัวโดนหักคะแนนหรือไม่?",
+                                ["ไม่เสีย", "โดนหัก (-4)"],
+                                horizontal=True,
                                 key="roi_hit_val",
-                                help="เลือก 4 ถ้าการย้ายตัวนี้ทำให้คุณติดลบ"
+                                help="เลือก 'โดนหัก (-4)' ถ้าการย้ายตัวนี้ทำให้คุณเสียแต้ม"
                             )
+                            # แปลงข้อความที่เลือกกลับเป็นตัวเลขสำหรับคำนวณ
+                            hit_val = 4 if hit_option == "โดนหัก (-4)" else 0
 
                         # --- Calculation Button & Result ---
                         if st.button("คำนวณความคุ้มค่า (Calculate ROI)", type="primary", use_container_width=True):
+                            # ใช้ค่า hit_val ที่แปลงเป็นตัวเลขแล้วส่งเข้าฟังก์ชัน
                             roi_data = calculate_transfer_roi(p_out_id, p_in_id, target_event, feat, fixtures_df, teams, hit_cost=hit_val)
                             
                             # แสดงผลลัพธ์
