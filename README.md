@@ -1,247 +1,118 @@
-# FPL Weekly Assistant 🏟️
+# 🏟️ FPL WIZ (ผู้ช่วยวิเคราะห์ FPL ด้วย AI)
 
-AI-powered Fantasy Premier League analysis tool that helps you optimize your team with data-driven insights.
+เครื่องมือช่วยวิเคราะห์และแนะนำนักเตะ Fantasy Premier League (FPL) ประจำสัปดาห์ พัฒนาด้วย Streamlit พร้อม AI ช่วยคำนวณคะแนนคาดการณ์ (Predicted Points) และแนะนำการจัดทีม
 
-## ✨ Features
+## ✨ คุณสมบัติเด่น (Features)
 
-- **Live FPL Data**: Pulls real-time data from official FPL API
-- **AI Predictions**: Uses machine learning to predict player points for next gameweek
-- **Team Optimization**: Suggests optimal Starting XI and bench order
-- **Transfer Suggestions**: Recommends transfers based on your strategy (Free, Hits, or Wildcard)
-- **Thai Language Support**: User interface with Thai translations
+โปรเจกต์นี้รวมเครื่องมือวิเคราะห์ที่จำเป็นสำหรับผู้เล่น FPL ไว้ในที่เดียว:
 
-## 📋 Requirements
+* **📊 แดชบอร์ดภาพรวม:** สรุปข้อมูลสำคัญก่อนเริ่ม Gameweek (GW) ใหม่ เช่น ทีมที่มี DGW/BGW, สถิติ xG/xA/xPTS จาก Understat, 5 สุดยอดกัปตัน, และนักเตะฟอร์มแรง
 
-- Python 3.8+
-- Internet connection (for FPL API access)
+* **🤖 ทำนายคะแนนด้วย AI:** คำนวณคะแนนคาดการณ์ (Predicted Points) ของนักเตะทุกคน โดยใช้โมเดลแบบ Hybrid ที่ผสมผสานสถิติจาก FPL API และสถิติขั้นสูง (xG, xA, npxG) จาก Understat
 
-### Python Dependencies
+* **🏆 แนะนำ 11 ตัวจริง:** จัดทีม 11 ตัวจริงและลำดับตัวสำรอง (Bench) ที่ดีที่สุดในทีมของคุณ โดยอิงจากคะแนนคาดการณ์และกฎการจัดตัว
+
+* **⚽ มุมมองสนาม (Pitch View):** แสดงผล 11 ตัวจริงในรูปแบบสนามฟุตบอลที่สวยงาม
+
+* **🔄 แนะนำการย้ายตัว:** ให้คำแนะนำการซื้อ-ขายนักเตะตามกลยุทธ์ที่คุณเลือก (Free Transfer, Allow Hit, Wildcard)
+
+* **🧮 เครื่องคำนวณ ROI:** ช่วยคำนวณความคุ้มค่า (ROI) ในการย้ายตัวนักเตะ โดยเปรียบเทียบคะแนนคาดการณ์ 3 นัดล่วงหน้า (รวมหักแต้ม (-4) ได้)
+
+* **🗓️ ตารางแข่ง (Fixture Planner):** แสดงตารางแข่ง 5 นัดล่วงหน้าแบบ Interactive พร้อมแยกสีความยาก-ง่าย
+
+* **🛠️ โหมดจำลอง (Simulation Mode):** ให้คุณทดลองเปลี่ยนนักเตะเข้า-ออกจากทีม 15 คนของคุณ และดูผลลัพธ์ 11 ตัวจริงได้ทันที
+
+## 📋 สิ่งที่ต้องมี (Requirements)
+
+1. **Python 3.8+**
+
+2. **แพ็คเกจ Python:** รายการแพ็คเกจที่จำเป็นอยู่ในไฟล์ `requirements.txt`
+
 ```
+
 streamlit
 pandas
 numpy
 scikit-learn
 pulp
 requests
+altair
+beautifulsoup4
+
 ```
 
----
+## 🚀 การติดตั้งและใช้งาน (Installation & Usage)
 
-## 🍎 macOS Setup
+คุณสามารถรันโปรเจกต์นี้บนเครื่องของคุณเองได้ง่ายๆ ตามขั้นตอนดังนี้:
 
-### Quick Start (Recommended)
+**1. Clone โปรเจกต์ (หรือดาวน์โหลด Zip):**
 
-1. **Download/Clone** this repository to your desired folder
-2. **Copy** the `fpl_start.command` file to the same folder as `fpl.py`
-3. **Double-click** `fpl_start.command` to launch the app
-4. The app will automatically:
-   - Create/activate virtual environment
-   - Install required packages
-   - Find available port and start the app
-   - Open your browser to the app URL
+```
 
-### Manual Setup
+git clone [https://github.com/kengjirayus/fpl.git](https://www.google.com/search?q=https://github.com/kengjirayus/fpl.git)
+cd fpl
 
-If you prefer manual setup:
+```
 
-```bash
-# Navigate to the project folder
-cd /path/to/your/fpl/folder
+**2. สร้างและเปิดใช้งาน Virtual Environment (แนะนำ):**
 
-# Create virtual environment
+* **macOS / Linux:**
+
+```
+
 python3 -m venv .venv
-
-# Activate virtual environment
 source .venv/bin/activate
 
-# Install dependencies
-pip install streamlit pandas numpy scikit-learn pulp requests
+```
 
-# Run the app
+* **Windows:**
+
+```
+
+python -m venv .venv
+..venv\\Scripts\\activate
+
+```
+
+**3. ติดตั้งแพ็คเกจที่จำเป็น:**
+
+```
+
+pip install -r requirements.txt
+
+```
+
+**4. รันแอป Streamlit:**
+
+```
+
 streamlit run fpl.py
-```
-
-### Troubleshooting macOS
-
-- **Permission denied**: Run `chmod +x fpl_start.command` in Terminal
-- **Port already in use**: The script will automatically find next available port
-- **Virtual environment issues**: Delete `.venv` folder and run the script again
-
----
-
-## 🪟 Windows Setup
-
-### Method 1: Batch File (Recommended)
-
-1. **Create** `fpl_start.bat` file in the same folder as `fpl.py`
-2. **Copy** this content to the batch file:
-
-```batch
-@echo off
-cd /d "%~dp0"
-
-echo Current directory: %CD%
-echo Files in directory:
-dir /b
-
-REM Check if virtual environment exists
-if not exist ".venv" (
-    echo Creating virtual environment...
-    python -m venv .venv
-)
-
-REM Activate virtual environment
-echo Activating virtual environment...
-call .venv\Scripts\activate.bat
-
-REM Install required packages
-echo Installing/updating required packages...
-pip install -q streamlit pandas numpy scikit-learn pulp requests
-
-REM Check if fpl.py exists
-if not exist "fpl.py" (
-    echo Error: fpl.py not found in current directory!
-    echo Please make sure this script is in the same folder as fpl.py
-    pause
-    exit /b 1
-)
-
-REM Find available port
-set PORT=8501
-:check_port
-netstat -an | find ":%PORT% " > nul
-if %errorlevel% == 0 (
-    set /a PORT+=1
-    echo Port %PORT% is in use, trying next port...
-    goto check_port
-)
-
-REM Run the Streamlit app
-echo Starting FPL Assistant on port %PORT%...
-echo Opening browser at http://localhost:%PORT%
-streamlit run fpl.py --server.headless false --server.port %PORT%
-
-echo.
-echo FPL Assistant has stopped.
-pause
-```
-
-3. **Double-click** `fpl_start.bat` to launch the app
-
-### Method 2: PowerShell Script
-
-1. **Create** `fpl_start.ps1` file:
-
-```powershell
-# Change to script directory
-Set-Location $PSScriptRoot
-
-# Create virtual environment if it doesn't exist
-if (!(Test-Path ".venv")) {
-    Write-Host "Creating virtual environment..."
-    python -m venv .venv
-}
-
-# Activate virtual environment
-Write-Host "Activating virtual environment..."
-& ".venv\Scripts\Activate.ps1"
-
-# Install packages
-Write-Host "Installing/updating packages..."
-pip install -q streamlit pandas numpy scikit-learn pulp requests
-
-# Find available port
-$port = 8501
-while ((Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue)) {
-    $port++
-    Write-Host "Port $($port-1) is in use, trying port $port..."
-}
-
-# Run app
-Write-Host "Starting FPL Assistant on port $port..."
-streamlit run fpl.py --server.port $port
-
-Read-Host "Press Enter to exit"
-```
-
-2. **Right-click** → "Run with PowerShell"
-
-### Troubleshooting Windows
-
-- **Python not found**: Install Python from [python.org](https://python.org) and add to PATH
-- **Execution policy error**: Run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` in PowerShell
-- **Port issues**: The scripts automatically find available ports
-- **Virtual environment errors**: Delete `.venv` folder and run the script again
-
----
-
-## 🚀 How to Use
-
-1. **Launch the app** using your platform's method above
-2. **Enter your FPL Team ID** in the sidebar
-   - Find your Team ID in the FPL website URL: `https://fantasy.premierleague.com/entry/YOUR_ID_HERE/`
-3. **Choose transfer strategy**:
-   - **Free Transfer**: Only use free transfers
-   - **Allow Hit (AI Suggest)**: AI will suggest when taking hits is worth it
-   - **Wildcard/Free Hit**: Optimize entire 15-man squad
-4. **View recommendations**:
-   - Top projected players for next gameweek
-   - Optimal Starting XI and bench order
-   - Captain and Vice-captain suggestions
-   - Transfer recommendations
-
-## 📁 Project Structure
 
 ```
-FPL/
-├── fpl.py                 # Main Streamlit application
-├── fpl_start.command      # macOS launcher script
-├── fpl_start.bat          # Windows launcher script (create this)
-├── fpl_start.ps1          # Windows PowerShell script (create this)
-├── .venv/                 # Virtual environment (auto-created)
-└── README.md              # This file
+
+แอปจะเปิดขึ้นในเบราว์เซอร์ของคุณโดยอัตโนมัติ
+
+## 🕹️ วิธีการใช้งานแอป
+
+1. **รันแอป** ตามขั้นตอนด้านบน
+
+2. ไปที่แถบ **Settings (ตั้งค่า)** ด้านข้าง
+
+3. **ใส่ FPL Team ID** ของคุณ (ดูวิธีหา ID ได้ในแอป)
+
+4. **เลือกกลยุทธ์การย้ายตัว** (Transfer Strategy) ที่คุณต้องการ:
+
+   * `Free Transfer`: แนะนำโดยใช้โควต้าฟรีที่คุณมี
+
+   * `Allow Hit (AI Suggest)`: อนุญาตให้ AI แนะนำการย้ายตัวแบบติดลบ (-4) ถ้าคุ้มค่า
+
+   * `Wildcard / Free Hit`: แนะนำการจัดทีม 15 คนที่ดีที่สุด (สำหรับ Wildcard หรือ Free Hit)
+
+5. กดปุ่ม **"Analyze Team"**
+
+6. แอปจะแสดงผลการวิเคราะห์ทีม, 11 ตัวจริง, และคำแนะนำการย้ายตัวให้คุณ
+
+## 📄 สิทธิ์การใช้งาน (License)
+
+โปรเจกต์นี้อยู่ภายใต้สิทธิ์การใช้งานแบบ MIT ดูรายละเอียดเพิ่มเติมได้ในไฟล์ `LICENSE`
 ```
-
-## 🔧 Advanced Configuration
-
-### Custom Port
-To use a specific port, edit the launch script and change:
-- macOS/Linux: `--server.port 8502`
-- Windows: `set PORT=8502`
-
-### Headless Mode
-To run without auto-opening browser:
-- Change `--server.headless false` to `--server.headless true`
-
-### Debug Mode
-Add `--logger.level debug` to the streamlit command for detailed logging.
-
-## 🆘 Support
-
-### Common Issues
-
-1. **"Module not found" errors**: Virtual environment not activated properly
-2. **"Port already in use"**: Close existing Streamlit apps or use different port
-3. **API errors**: Check internet connection and FPL website availability
-4. **Optimization errors**: Usually due to invalid team configurations
-
-### Getting Help
-
-- Check the terminal/command prompt output for error messages
-- Ensure all files are in the same directory
-- Verify your FPL Team ID is correct
-- Make sure you have internet connection
-
----
-
-## 📄 License
-
-This project is for educational and personal use only. Fantasy Premier League data belongs to the Premier League.
-
-## 🤝 Contributing
-
-Feel free to submit issues, feature requests, or pull requests to improve the application.
-
----
-
-**Happy FPL managing! 🏆**
