@@ -850,25 +850,22 @@ def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFr
 
     return opp_df, diff_df
 
-# --- DELETED (v1.9.3): Removed redundant get_difficulty_css_class from v1.9.0 ---
-
-# --- DELETED (v1.9.3): Removed redundant display_visual_fixture_planner from v1.9.0 ---
-
 @st.cache_data(ttl=300)
 def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame, all_players: pd.DataFrame, budget: float = 9.0):
     """
     Finds the best GK rotation pairs within a budget for the next 5 GWs.
+    REVISED: Returns a 1-5 star rating instead of the raw score.
     """
-        # กรองเฉพาะ GK ที่มีโอกาสลงเล่นสูง (>75%) หรือมีคะแนนคาดการณ์ > 0.5 เพื่อป้องกันตัวสำรองที่ไม่เคยลง
+    # กรองเฉพาะ GK ที่มีโอกาสลงเล่นสูง (>75%) หรือมีคะแนนคาดการณ์ > 0.5 เพื่อป้องกันตัวสำรองที่ไม่เคยลง
     gks = all_players[
-        (all_players['element_type'] == 1) & 
+        (all_players['element_type'] == 1) &
         ((all_players['chance_of_playing_next_round'] > 75) | (all_players['pred_points'] > 0.5))
     ].copy()
     
     gks['price'] = gks['now_cost'] / 10.0
     gks['team_short'] = gks['team'].map(teams_df.set_index('id')['short_name'])
 
-    cheap_gks = gks[gks['price'] <= (budget - 4.0)] # Must be <= (budget - cheapest GK)
+    cheap_gks = gks[gks['price'] <= (budget - 4.0)]
     
     pairs = []
     checked_pairs = set()
@@ -878,20 +875,17 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
             if i >= j or (gk2['team'], gk1['team']) in checked_pairs:
                 continue
             
-            # Check budget
             if (gk1['price'] + gk2['price']) > budget:
                 continue
                 
             checked_pairs.add((gk1['team'], gk2['team']))
             
-            # Get difficulty rows for these two teams
             try:
                 diff1 = difficulty_matrix.loc[gk1['team_short']]
                 diff2 = difficulty_matrix.loc[gk2['team_short']]
             except KeyError:
-                continue # Skip if team not in matrix
+                continue
 
-            # Calculate rotation score (minimum difficulty for each GW)
             rotation_score = 0
             for col in difficulty_matrix.columns:
                 if col == 'Total': continue
@@ -900,18 +894,55 @@ def find_rotation_pairs(difficulty_matrix: pd.DataFrame, teams_df: pd.DataFrame,
             pairs.append({
                 'GK1': f"{gk1['web_name']} ({gk1['price']:.1f}m)",
                 'GK2': f"{gk2['web_name']} ({gk2['price']:.1f}m)",
-                'Total Cost': rotation_score,
+                'Total Cost': gk1['price'] + gk2['price'], # <-- บั๊กที่แก้ไปแล้ว
                 'Rotation Score': rotation_score
             })
 
     if not pairs:
-        return pd.DataFrame(columns=['GK1', 'GK2', 'Total Cost', 'Rotation Score'])
+        return pd.DataFrame(columns=['GK1', 'GK2', 'Total Cost','Rating'])
         
-    pairs_df = pd.DataFrame(pairs).sort_values('Rotation Score', ascending=True).head(5)
-    pairs_df['Total Cost'] = pairs_df['Total Cost'].apply(lambda x: f"£{x:.1f}m")
-    pairs_df['Rotation Score'] = pairs_df['Rotation Score'].apply(lambda x: f"{x:.1f}")
-    return pairs_df.reset_index(drop=True)
+    pairs_df = pd.DataFrame(pairs)
+    
+    # --- NEW RATING LOGIC (เริ่ม) ---
+    if not pairs_df.empty:
+        # 1. Sort by score first (best = lowest score)
+        pairs_df = pairs_df.sort_values('Rotation Score', ascending=True)
+        
+        # 2. Get min/max score from the *entire list* found
+        min_score = pairs_df['Rotation Score'].min()
+        max_score = pairs_df['Rotation Score'].max()
+        
+        # 3. Define star rating function
+        def get_star_rating(score, min_s, max_s):
+            if max_s == min_s:
+                return "⭐⭐⭐⭐⭐" # All are equally good
+            
+            # Normalize (0=best, 1=worst)
+            norm_score = (score - min_s) / (max_s - min_s)
+            
+            if norm_score < 0.2:
+                return "⭐⭐⭐⭐⭐"
+            elif norm_score < 0.4:
+                return "⭐⭐⭐⭐"
+            elif norm_score < 0.6:
+                return "⭐⭐⭐"
+            elif norm_score < 0.8:
+                return "⭐⭐"
+            else:
+                return "⭐"
 
+        # 4. Apply star rating
+        pairs_df['Rating'] = pairs_df['Rotation Score'].apply(lambda x: get_star_rating(x, min_score, max_score))
+    # --- NEW RATING LOGIC (จบ) ---
+
+    # 5. Format Total Cost
+    pairs_df['Total Cost'] = pairs_df['Total Cost'].apply(lambda x: f"£{x:.1f}m")
+    
+    # 6. Select final columns and take top 10
+    final_cols = ['GK1', 'GK2', 'Total Cost','Rating']
+    pairs_df = pairs_df[final_cols].head(10)
+    
+    return pairs_df.reset_index(drop=True)
 # --- END: NEW FIXTURE PLANNER FUNCTIONS ---
 
 
@@ -1819,7 +1850,7 @@ def display_home_dashboard(
     st.markdown("---")
     
     # Display Rotation Pairs
-    st.markdown("#### 🥅 Top 5 คู่ผู้รักษาประตู (GK Rotation Pairs)")
+    st.markdown("#### 🥅 Top 10 คู่ผู้รักษาประตู (GK Rotation Pairs)")
     st.caption(f"ค้นหาคู่ GK ที่ตารางแข่งสลับกันดีที่สุด (งบรวมไม่เกิน £9.0m)")
     st.dataframe(rotation_pairs, use_container_width=True, hide_index=True)
 
