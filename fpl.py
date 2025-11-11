@@ -1791,12 +1791,28 @@ def display_home_dashboard(
     value_df['price'] = value_df['now_cost'] / 10.0
     value_df['position'] = value_df['element_type'].map(POSITIONS)
     
-    chart = alt.Chart(value_df).mark_circle().encode(
+        # --- START EDIT: ปรับแต่งสีและลำดับกราฟ ---
+    
+    # 1. กำหนดลำดับของตำแหน่ง (Domain)
+    position_domain = ['GK', 'DEF', 'MID', 'FWD']
+    
+    # 2. กำหนดสีที่ต้องการ (Range)
+    # (GK = เหลือง, DEF = แดง, MID = เขียว, FWD = น้ำเงิน)
+    color_range = ['#FFC300', '#C70039', '#28B463', '#3498DB'] 
+
+    chart = alt.Chart(value_df).mark_circle(size=60, opacity=0.7).encode(
         x=alt.X('price', title='ราคา (£)'),
         y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
-        color='position',
-        tooltip=['web_name', 'team_short', 'price', 'pred_points'] # Add name and team
+        
+        # 3. ใช้ alt.Color() เพื่อกำหนดค่า domain (ลำดับ) และ range (สี)
+        color=alt.Color('position', 
+                        legend=alt.Legend(title="ตำแหน่ง"), # ตั้งชื่อ legend
+                        scale=alt.Scale(domain=position_domain, range=color_range)),
+                        
+        tooltip=['web_name', 'team_short', 'position', 'price', 'pred_points'] # เพิ่ม position ใน tooltip
     ).interactive() # Make it zoomable/pannable
+    
+    # --- END EDIT ---
     
     st.altair_chart(chart, use_container_width=True)
     st.caption("หมายเหตุ: การแสดงรูปนักเตะใน tooltip ของกราฟนี้ยังไม่รองรับครับ")
