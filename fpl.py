@@ -1828,10 +1828,10 @@ def display_home_dashboard(
     position_domain = ['GK', 'DEF', 'MID', 'FWD']
     
     # 2. กำหนดสีที่ต้องการ (Range)
-    # (GK = เหลือง, DEF = แดง, MID = เขียว, FWD = น้ำเงิน)
-    color_range = ['#FFC300', '#C70039', '#28B463', '#3498DB'] 
+    # (GK, DEF, MID, FWD)
+    color_range = ['#EE7733', '#0077BB', '#CC3311', '#33BBEE'] 
 
-    chart = alt.Chart(value_df).mark_circle(size=60, opacity=0.7).encode(
+    chart = alt.Chart(value_df).mark_circle(size=80, opacity=0.85, stroke='#CCCCCC',strokeWidth=0.8).encode(
         x=alt.X('price', title='ราคา (£)'),
         y=alt.Y('pred_points', title='คะแนนคาดการณ์'),
         
