@@ -583,7 +583,7 @@ def current_and_next_event(events: List[Dict]) -> Tuple[Optional[int], Optional[
     return cur, next_ev
 
 TEAM_MAP_COLS = ["id", "code", "name", "short_name", "strength_overall_home", "strength_overall_away",
-                 "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away"]
+                 "strength_attack_home", "strength_attack_away", "strength_defence_home", "strength_defence_away","position"]
 
 # --- BUGFIX v1.9.1: Define POSITIONS globally ---
 POSITIONS = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
@@ -818,14 +818,14 @@ def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFr
                 opp_id = game['team_a']
                 opponents.append(f"{team_names.get(opp_id, '?')} (H)")
                 # Difficulty: Opponent's away strength
-                diff = team_strength.loc[opp_id, 'strength_overall_away']
+                diff = team_strength.loc[opp_id, 'position']
                 difficulties.append(diff)
 
             for _, game in away_games.iterrows():
                 opp_id = game['team_h']
                 opponents.append(f"{team_names.get(opp_id, '?')} (A)")
                 # Difficulty: Opponent's home strength
-                diff = team_strength.loc[opp_id, 'strength_overall_home']
+                diff = team_strength.loc[opp_id, 'position']
                 difficulties.append(diff)
             
             # Store data (handles DGW by joining strings/averaging difficulty)
@@ -845,7 +845,7 @@ def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFr
     
     # Sort by total difficulty (easiest first)
     diff_df['Total'] = diff_df.sum(axis=1)
-    diff_df = diff_df.sort_values('Total', ascending=True)
+    diff_df = diff_df.sort_values('Total', ascending=False)
     opp_df = opp_df.loc[diff_df.index] # Match order
 
     return opp_df, diff_df
@@ -1377,24 +1377,22 @@ def display_pitch_view(team_df: pd.DataFrame, title: str):
     st.markdown(html, unsafe_allow_html=True)
 
 ###############################
-# --- NEW: Visual Fixture Planner (v1.9.3) ---
+# --- NEW: Visual Fixture Planner (v2.0) ---
 ###############################
 
-def get_difficulty_css_class(val, min_val, max_val):
-    """Returns the CSS class based on the difficulty score."""
+def get_difficulty_css_class(val, min_val, max_val): # min_val/max_val ไม่ได้ใช้แล้ว
+    """Returns the CSS class based on the opponent's league position."""
     if val == 0: # BGW
         return "bg-blank" # Dark grey
     
-    # Normalize from 0 (easy) to 1 (hard)
-    norm_val = (val - min_val) / (max_val - min_val) if (max_val - min_val) > 0 else 0.5
-    
-    if norm_val < 0.33:
+    # Logic ใหม่: อิงตามอันดับตารางคะแนน (1-20)
+    if val >= 15: # อันดับ 15-20 (โซนท้ายตาราง)
         # Easy (Green) - เขียวสด
         return "bg-easy"
-    elif norm_val < 0.66:
+    elif val >= 8: # อันดับ 8-14 (กลางตาราง)
         # Medium (Orange) - สีส้ม
         return "bg-medium"
-    else:
+    else: # อันดับ 1-7 (ท็อป 7)
         # Hard (Red) - แดง
         return "bg-hard"
 
@@ -1411,8 +1409,8 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
     
     # Calculate min/max for coloring (excluding BGWs and Total)
     non_zero_vals = diff_matrix[gw_cols][diff_matrix[gw_cols] != 0].unstack().dropna()
-    min_val = non_zero_vals.min()
-    max_val = non_zero_vals.max()
+    min_val = 1
+    max_val = 20
 
     # --- Start building HTML string ---
     html = """
@@ -1810,7 +1808,7 @@ def display_home_dashboard(
 
     # --- Fixture Difficulty ---
     st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
-    st.markdown("เรียงตามความง่าย ➡ ยากของตารางแข่งขัน (สีเขียว = ง่าย, สีแดง = ยาก)")
+    st.markdown("เรียงตามความง่าย ➡ ยาก **อันดับตารางคะแนน** ของคู่แข่ง (สีเขียว = ง่าย, สีแดง = ยาก)")
     display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
     st.markdown("---")
 
