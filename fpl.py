@@ -302,7 +302,7 @@ def merge_understat_data(
             us_players_df['fpl_team_id'] = us_players_df['fpl_name'].map(fpl_name_to_id_map)
             
             # Get the columns we need from FPL data
-            fpl_lookup = fpl_players_df[['team', 'web_name', 'photo_url', 'team_short']].copy()
+            fpl_lookup = fpl_players_df[['team', 'web_name', 'photo_url', 'team_short', 'goals_scored', 'assists']].copy()
             
             # Merge Understat players with FPL lookup on team ID
             # This creates many potential matches for each team
@@ -329,7 +329,7 @@ def merge_understat_data(
             merged_players = final_players.drop_duplicates(subset=['id', 'player_name'])
             
             merged_players = merged_players[[
-                'player_name', 'team_short', 'photo_url', 'xG', 'xA'
+                'player_name', 'team_short', 'photo_url', 'xG', 'xA', 'goals_scored', 'assists'
             ]]
         except Exception as e:
             st.warning(f"Error merging Understat players: {e}")
@@ -1603,7 +1603,7 @@ def display_understat_section(merged_players: pd.DataFrame, merged_teams: pd.Dat
                     st.markdown(get_player_image_html(row['photo_url'], row['player_name'], 60), unsafe_allow_html=True)
                 with c2:
                     st.markdown(f"**{row['player_name']}** ({row['team_short']})")
-                    st.markdown(f"**xG: {row['xG']:.2f}**")
+                    st.markdown(f"**xG: {row['xG']:.2f} | ยิง: {row['goals_scored']:.0f}**")
 
     # --- Column 2: Top 5 xA ---
     with col2:
@@ -1618,7 +1618,7 @@ def display_understat_section(merged_players: pd.DataFrame, merged_teams: pd.Dat
                     st.markdown(get_player_image_html(row['photo_url'], row['player_name'], 60), unsafe_allow_html=True)
                 with c2:
                     st.markdown(f"**{row['player_name']}** ({row['team_short']})")
-                    st.markdown(f"**xA: {row['xA']:.2f}**")
+                    st.markdown(f"**xA: {row['xA']:.2f} | จ่าย: {row['assists']:.0f}**")
 
     # --- Column 3: Top 5 xPTS ---
     with col3:
