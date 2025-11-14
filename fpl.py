@@ -1031,7 +1031,16 @@ def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], Lis
 
     prob = LpProblem("XI_Optimization", LpMaximize)
     x = {i: LpVariable(f"x_{i}", cat=LpBinary) for i in ids}
-    prob += lpSum([pred_points.get(i, 0) * x[i] for i in ids])
+    # ดึงข้อมูล 'play_prob' มาใช้
+    play_probs = squad_players_df['play_prob']
+
+    # สร้าง 'คะแนนเป้าหมาย' ใหม่ที่เน้นความแน่นอน
+    # โดยการคูณ pred_points ซ้ำด้วย play_prob
+    # (ผู้เล่นที่โอกาสลง 100% (1.0) จะได้คะแนนเต็ม, ผู้เล่นที่โอกาสลง 50% (0.5) คะแนนจะถูกลดฮวบ)
+    objective_scores = pred_points * play_probs
+
+    # ใช้ 'objective_scores' ใหม่นี้แทน 'pred_points' เดิม
+    prob += lpSum([objective_scores.get(i, 0) * x[i] for i in ids])
 
     # Constraints
     prob += lpSum([x[i] for i in ids]) == 11
@@ -2250,7 +2259,7 @@ def main():
                     
                     bench_df = squad_df.loc[bench_ids].copy()
                     bench_gk = bench_df[bench_df['element_type'] == 1]
-                    bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                    bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values(by=['play_prob', 'pred_points'],ascending=[False, False])
                     ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                     ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                     
@@ -2368,7 +2377,7 @@ def main():
                             
                             bench_df = squad_df.loc[bench_ids].copy()
                             bench_gk = bench_df[bench_df['element_type'] == 1]
-                            bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                            bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values(by=['play_prob', 'pred_points'],ascending=[False, False])
                             ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                             ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                             
@@ -2704,7 +2713,7 @@ def main():
                                 # Display Bench
                                 bench_df = sim_squad_df.loc[bench_ids_sim].copy()
                                 bench_gk = bench_df[bench_df['element_type'] == 1]
-                                bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values('pred_points', ascending=False)
+                                bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values(by=['play_prob', 'pred_points'],ascending=[False, False])
                                 ordered_bench_df = pd.concat([bench_gk, bench_outfield])
                                 ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
                                 
