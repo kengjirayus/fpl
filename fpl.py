@@ -699,7 +699,7 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     cols_to_process = [
         "form", "points_per_game", "ict_index", "selected_by_percent", "now_cost", 
         "minutes", "goals_scored", "assists", "clean_sheets",
-        "cost_change_event", "transfers_in_event", "transfers_out_event", "code"
+        "cost_change_event","cost_change_start", "transfers_in_event", "transfers_out_event", "code"
     ]
     for col in cols_to_process:
         if col in elements.columns:
@@ -1673,12 +1673,13 @@ def display_home_dashboard(
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
                     st.markdown(f"**คะแนน: {row['pred_points']:.1f}**")
                     st.caption(f"คู่แข่ง: {row['opponent_str']}")
+                    st.caption(f"ราคาปัจจุบัน: £{row['now_cost']/10.0:.1f}m")
 
     with col2:
         st.subheader("💹 ราคากำลังขึ้น 🔼")
         
         # --- Price Risers ---
-        risers = feat_df[feat_df['cost_change_event'] > 0].sort_values('cost_change_event', ascending=False).head(5)
+        risers = feat_df[feat_df['cost_change_start'] > 0].sort_values('cost_change_start', ascending=False).head(5)
         if risers.empty:
             st.caption("ไม่มีนักเตะราคาขึ้นในสัปดาห์นี้")
         else:
@@ -1689,16 +1690,20 @@ def display_home_dashboard(
                     st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 60), unsafe_allow_html=True)
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
-                    st.caption(f"▲ ราคาขึ้น: £{row['cost_change_event']/10.0:.1f}m")
+                    # 1. แสดงราคาที่ขึ้นในสัปดาห์นี้ (ถ้ามี)
+                    weekly_change = row['cost_change_event']
+                    if weekly_change > 0:
+                        st.caption(f"▲ ขึ้นสัปดาห์นี้: +£{weekly_change/10.0:.1f}m")
                     # ===== START USER EDIT =====
-                    st.caption(f"ราคา (£): £{row['now_cost']/10.0:.1f}m")
+                    st.caption(f"▲ ขึ้นรวม: +£{row['cost_change_start']/10.0:.1f}m")
+                    st.caption(f"ราคาปัจจุบัน: £{row['now_cost']/10.0:.1f}m")
                     # ===== END USER EDIT =====
 
     with col3:
         st.subheader("🔻 ราคากำลังลง 📉")
         
         # --- Price Fallers ---
-        fallers = feat_df[feat_df['cost_change_event'] < 0].sort_values('cost_change_event', ascending=True).head(5)
+        fallers = feat_df[feat_df['cost_change_start'] < 0].sort_values('cost_change_start', ascending=True).head(5)
         if fallers.empty:
             st.caption("ไม่มีนักเตะราคาลงในสัปดาห์นี้")
         else:
@@ -1709,9 +1714,13 @@ def display_home_dashboard(
                     st.markdown(get_player_image_html(row['photo_url'], row['web_name'], 60), unsafe_allow_html=True)
                 with c2: 
                     st.markdown(f"**{row['web_name']}** ({row['team_short']})")
-                    st.caption(f"▼ ราคาลง: £{abs(row['cost_change_event']/10.0):.1f}m")
+                    # 1. แสดงราคาที่ลงในสัปดาห์นี้ (ถ้ามี)
+                    weekly_change = row['cost_change_event']
+                    if weekly_change < 0:
+                        st.caption(f"▼ ลงสัปดาห์นี้: -£{abs(weekly_change/10.0):.1f}m")
                     # ===== START USER EDIT =====
-                    st.caption(f"ราคา (£): £{row['now_cost']/10.0:.1f}m")
+                    st.caption(f"▼ ลงรวม: -£{abs(row['cost_change_start']/10.0):.1f}m")
+                    st.caption(f"ราคาปัจจุบัน: £{row['now_cost']/10.0:.1f}m")
                     # ===== END USER EDIT =====
 
 
@@ -1808,7 +1817,7 @@ def display_home_dashboard(
 
     # --- Fixture Difficulty ---
     st.subheader("🗓️ ตารางแข่ง 5 นัดล่วงหน้า (Fixture Planner)")
-    st.markdown("เรียงตามความง่าย ➡ ยาก **อันดับตารางคะแนน** ของคู่แข่ง (สีเขียว = ง่าย, สีแดง = ยาก)")
+    st.markdown("เรียงตามความง่าย ➡ ยาก **อันดับตารางคะแนน** ของคู่แข่ง (สีเขียว = ง่าย, สีเหลือง = ปานกลาง, สีแดง = ยาก)")
     display_visual_fixture_planner(opp_matrix, diff_matrix, teams_df)
     st.markdown("---")
 
