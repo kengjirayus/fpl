@@ -816,16 +816,18 @@ def get_fixture_difficulty_matrix(fixtures_df: pd.DataFrame, teams_df: pd.DataFr
             
             for _, game in home_games.iterrows():
                 opp_id = game['team_a']
-                opponents.append(f"{team_names.get(opp_id, '?')} (H)")
-                # Difficulty: Opponent's away strength
-                diff = team_strength.loc[opp_id, 'position']
+                opp_rank = team_strength.loc[opp_id, 'position'] # <--- ดึงอันดับคู่แข่ง
+                opponents.append(f"{team_names.get(opp_id, '?')} (H) (อันดับ {opp_rank})") # <--- (สำคัญ) เพิ่ม (อันดับ)
+                # Difficulty: Opponent's league position
+                diff = opp_rank # <--- ใช้ diff เป็นอันดับเหมือนเดิม
                 difficulties.append(diff)
 
             for _, game in away_games.iterrows():
                 opp_id = game['team_h']
-                opponents.append(f"{team_names.get(opp_id, '?')} (A)")
-                # Difficulty: Opponent's home strength
-                diff = team_strength.loc[opp_id, 'position']
+                opp_rank = team_strength.loc[opp_id, 'position'] # <--- ดึงอันดับคู่แข่ง
+                opponents.append(f"{team_names.get(opp_id, '?')} (A) (อันดับ {opp_rank})") # <--- (สำคัญ) เพิ่ม (อันดับ)
+                # Difficulty: Opponent's league position
+                diff = opp_rank # <--- ใช้ diff เป็นอันดับเหมือนเดิม
                 difficulties.append(diff)
             
             # Store data (handles DGW by joining strings/averaging difficulty)
@@ -1399,16 +1401,17 @@ def get_difficulty_css_class(val, min_val, max_val): # min_val/max_val ไม่
 def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.DataFrame, teams_df: pd.DataFrame):
     """
     Displays the Fixture Planner as a visual HTML table with logos and colors.
+    (Enhanced to show team ranks and opponent ranks)
     """
     
-    # Create lookup dict for team logos
+    # --- ENHANCE: สร้าง lookup สำหรับ "อันดับ" ของทีม ---
     team_logo_lookup = teams_df.set_index('short_name')['logo_url'].to_dict()
+    team_rank_lookup = teams_df.set_index('short_name')['position'].to_dict()
     
     # Get GW columns
     gw_cols = [col for col in diff_matrix.columns if col.startswith('GW')]
     
-    # Calculate min/max for coloring (excluding BGWs and Total)
-    non_zero_vals = diff_matrix[gw_cols][diff_matrix[gw_cols] != 0].unstack().dropna()
+    # (min/max ไม่ได้ใช้แล้ว แต่เก็บไว้เผื่อ)
     min_val = 1
     max_val = 20
 
@@ -1434,7 +1437,7 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
             font-size: 14px;
         }
         .team-cell {
-            width: 70px;
+            width: 85px; /* <--- ENHANCE: ขยายความกว้างคอลัมน์ทีม */
             background-color: #f0f2f6;
             padding: 4px;
         }
@@ -1449,6 +1452,13 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
             color: #333;
             margin-top: 2px;
         }
+        /* --- ENHANCE: CSS สำหรับอันดับทีม --- */
+        .team-rank {
+            font-size: 11px;
+            font-weight: normal;
+            color: #555;
+            margin-top: 0;
+        }
         .fixture-cell {
             vertical-align: middle;
             font-size: 13px;
@@ -1461,7 +1471,13 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
             height: 25px;
             vertical-align: middle;
         }
-        /* Color classes from user request (UPDATED) */
+        /* --- ENHANCE: CSS สำหรับอันดับคู่แข่ง --- */
+        .opponent-rank {
+            display: block;
+            font-size: 11px;
+            font-weight: normal;
+        }
+        /* Color classes (ยังเหมือนเดิม) */
         .bg-easy { background-color: #35F00A; color: black; }
         .bg-medium { background-color: #FFF100; color: black; }
         .bg-hard { background-color: #FF0000; color: white; }
@@ -1487,29 +1503,63 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
     # Add Team Rows
     for team_short_name, diff_row in diff_matrix.drop(columns=['Total']).iterrows():
         team_logo_url = team_logo_lookup.get(team_short_name, '')
+        
+        # --- ENHANCE: ดึงอันดับของทีมเรา ---
+        team_rank = team_rank_lookup.get(team_short_name, '?')
+        
         html += "<tr>"
-        # Column 1: Team Logo & Name
-        html += f"<td class='team-cell'><img src='{team_logo_url}' alt='{team_short_name}'><br><span>{team_short_name}</span></td>"
+        # --- ENHANCE: แสดงชื่อทีม + อันดับ ---
+        html += f"<td class='team-cell'>"
+        html += f"<img src='{team_logo_url}' alt='{team_short_name}'><br>"
+        html += f"<span>{team_short_name}</span>"
+        html += f"<span class='team-rank'>(อันดับ {team_rank})</span>"
+        html += "</td>"
         
         # Columns 2-6: Fixtures
         for gw in gw_cols:
             diff_score = diff_row[gw]
-            opp_string = opp_matrix.loc[team_short_name, gw]
+            opp_string = opp_matrix.loc[team_short_name, gw] # นี่คือ "CHE (H) (อันดับ 7)"
             css_class = get_difficulty_css_class(diff_score, min_val, max_val)
             
             cell_content = ""
             if opp_string == "BLANK":
                 cell_content = "BLANK"
             elif "," in opp_string:
-                # Double Gameweek
-                cell_content = opp_string.replace(", ", "<br>")
+                # Double Gameweek: "CHE (H) (อันดับ 7), ARS (A) (อันดับ 2)"
+                cell_content = opp_string.replace(", ", "<br>") # แสดงผล "CHE (H) (อันดับ 7)" [ขึ้นบรรทัดใหม่] "ARS (A) (อันดับ 2)"
                 css_class = "dgw-cell " + css_class # Add DGW style
             else:
-                # Single Gameweek
-                opp_short_name = opp_string.split(" ")[0]
-                home_away = opp_string.split(" ")[1]
-                opp_logo_url = team_logo_lookup.get(opp_short_name, '')
-                cell_content = f"<img src='{opp_logo_url}' alt='{opp_short_name}'><br>{home_away}"
+                # Single Gameweek: "CHE (H) (อันดับ 7)"
+                
+                # --- ENHANCE V2: แก้ไข Bug การแยกชื่อทีม (เช่น "Man City") ---
+                try:
+                    # "Man City (H) (อันดับ 1)"
+                    
+                    # 1. ค้นหาวงเล็บสุดท้าย (ของอันดับ)
+                    last_paren_index = opp_string.rfind('(')
+                    if last_paren_index == -1: raise Exception("No last parenthesis")
+                    
+                    opp_rank_str = opp_string[last_paren_index:].strip() # -> "(อันดับ 1)"
+                    main_part = opp_string[:last_paren_index].strip()    # -> "Man City (H)"
+                    
+                    # 2. ค้นหาวงเล็บที่สอง (ของ H/A)
+                    second_last_paren_index = main_part.rfind('(')
+                    if second_last_paren_index == -1: raise Exception("No second parenthesis")
+                    
+                    home_away = main_part[second_last_paren_index:].strip()    # -> "(H)"
+                    opp_short_name = main_part[:second_last_paren_index].strip() # -> "Man City"
+
+                    # 3. ดึงโลโก้
+                    opp_logo_url = team_logo_lookup.get(opp_short_name, '')
+                    
+                    # 4. สร้าง HTML
+                    cell_content = f"<img src='{opp_logo_url}' alt='{opp_short_name}'>"
+                    cell_content += f"<br>{home_away}"
+                    cell_content += f"<span class='opponent-rank'>{opp_rank_str}</span>" # แสดงอันดับบรรทัดล่าง
+                
+                except Exception as e:
+                    # st.error(f"Error parsing fixture string: {opp_string} | {e}") # สามารถเปิดเพื่อ debug
+                    cell_content = opp_string # Fallback
 
             html += f"<td class='fixture-cell {css_class}'>{cell_content}</td>"
         
@@ -1517,7 +1567,6 @@ def display_visual_fixture_planner(opp_matrix: pd.DataFrame, diff_matrix: pd.Dat
 
     html += "</tbody></table>"
     st.markdown(html, unsafe_allow_html=True)
-
 
 ###############################
 # --- NEW: Home Dashboard Function (v1.9.0) ---
