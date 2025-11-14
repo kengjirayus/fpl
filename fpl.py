@@ -2466,16 +2466,18 @@ def main():
                                 st.error(f"❌ **ไม่แนะนำ** {feat.loc[p_out_id, 'web_name']} ยังน่าจะทำแต้มได้ดีกว่า หรือไม่คุ้มค่า Hit")
 
                     st.markdown("---")
-                    
 
-                    # --- Original Transfer Suggestion Section ---
-                    st.subheader("🔄 Suggested Transfers (Based on API Team)")
-                    st.markdown(f"⚠️ *เนื่องจากข้อจำกัดของ FPL API เรื่องราคาขายอาจไม่ตรงกัน เลยแสดง 2 มุมมองเพื่อให้คุณตัดสินใจ* 🔎")
+                    # --- ENHANCED: Transfer Suggestions (Single View) ---
+                    st.subheader("🔄 แนะนำการย้ายตัว (Suggested Transfers)")
+                    st.markdown("💡 คำแนะนำนี้ใช้ **ราคาขายจริง (Selling Price)** จาก FPL API ของคุณ")
+                    
                     with st.spinner("Analyzing potential transfers..."):
-                        normal_moves, conservative_moves = suggest_transfers_enhanced(
+                        
+                        # ใช้ฟังก์ชัน suggest_transfers ดั้งเดิม (เนื่องจากเรามี selling_price ที่แม่นยำแล้ว)
+                        moves = suggest_transfers(
                             current_squad_ids=valid_pick_ids,
                             bank=bank,
-                            free_transfers=free_transfers,
+                            free_transfers=free_transfers, # นี่คือค่าที่ User เลือกใน Sidebar
                             all_players=feat,
                             strategy=transfer_strategy,
                             fixtures_df=fixtures_df,
@@ -2483,72 +2485,56 @@ def main():
                             current_event=target_event
                         )
 
-                        # Display normal suggestions
-                        st.markdown("#### 🔄 แนะนำแบบปกติ")
-                        if normal_moves:
-                            normal_df = pd.DataFrame(normal_moves)
-                            normal_df = normal_df.reset_index(drop=True)
-                            normal_df.index = normal_df.index + 1
-                            normal_df.index.name = "ลำดับ"
-                            total_out = normal_df['out_cost'].sum()
-                            total_in = normal_df['in_cost'].sum()
-                            st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m**")
+                        if moves:
+                            moves_df = pd.DataFrame(moves)
+                            moves_df = moves_df.reset_index(drop=True)
+                            moves_df.index = moves_df.index + 1
+                            moves_df.index.name = "ลำดับ"
                             
-                            # --- Added 3-GW ROI column to display ---
+                            total_out = moves_df['out_cost'].sum()
+                            total_in = moves_df['in_cost'].sum()
+                            total_hit_cost = moves_df['hit_cost'].sum()
+                            
+                            st.info(f"💰 งบประมาณ: ขายออก **£{total_out:.1f}m** | ซื้อเข้า **£{total_in:.1f}m** | เสียแต้ม: **-{total_hit_cost}**")
+                            
+                            # แปลงชื่อคอลัมน์ให้เข้าใจง่ายขึ้น
                             cols_to_ren = {
                                 "out_name": "ขายออก (Out)",
                                 "out_cost": "ราคาขาย (£)",
                                 "in_name": "ซื้อเข้า (In)",
                                 "in_cost": "ราคาซื้อ (£)",
-                                "in_points": "คะแนนคาดการณ์ (Pred Points)",
-                                "roi_3gw": "กำไร 3 นัด (3-GW Gain)" # New Column
+                                "delta_points": "กำไร (GW นี้)",
+                                "roi_3gw": "กำไร (3 GW)",
+                                "net_gain": "กำไรสุทธิ (GW นี้)",
+                                "hit_cost": "แต้มที่เสีย"
                             }
                             
-                            normal_display = normal_df.rename(columns=cols_to_ren)
-                            # Ensure columns exist before selecting
-                            final_cols = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)", "กำไร 3 นัด (3-GW Gain)"] if c in normal_display.columns]
+                            moves_display = moves_df.rename(columns=cols_to_ren)
+                            
+                            # กำหนดคอลัมน์และลำดับที่จะแสดงผล
+                            final_cols_order = [
+                                "ขายออก (Out)", 
+                                "ราคาขาย (£)", 
+                                "ซื้อเข้า (In)", 
+                                "ราคาซื้อ (£)",
+                                "กำไร (GW นี้)",
+                                "กำไร (3 GW)",
+                                "แต้มที่เสีย",
+                                "กำไรสุทธิ (GW นี้)"
+                            ]
+                            
+                            # กรองเฉพาะคอลัมน์ที่มีอยู่จริง
+                            final_cols = [c for c in final_cols_order if c in moves_display.columns]
 
-                            dynamic_height = 45 + (len(normal_df) * 35)
+                            dynamic_height = 45 + (len(moves_df) * 35)
                             display_user_friendly_table(
-                                df=normal_display[final_cols],
+                                df=moves_display[final_cols],
                                 title="",
                                 height=dynamic_height
                             )
                         else:
-                            st.write("ไม่มีการแนะนำแบบปกติ")
-
-                        # Display conservative suggestions
-                        st.markdown("#### 🛡️ แนะนำแบบระมัดระวัง")
-                        if conservative_moves:
-                            conservative_df = pd.DataFrame(conservative_moves)
-                            conservative_df = conservative_df.reset_index(drop=True)
-                            conservative_df.index = conservative_df.index + 1
-                            conservative_df.index.name = "ลำดับ"
-                            total_out_c = conservative_df['out_cost'].sum()
-                            total_in_c = conservative_df['in_cost'].sum()
-                            st.info(f"💰 งบประมาณ: ขายออก **£{total_out_c:.1f}m** | ซื้อเข้า **£{total_in_c:.1f}m**")
-                            
-                            cols_to_ren_c = {
-                                "out_name": "ขายออก (Out)",
-                                "out_cost": "ราคาขาย (£)",
-                                "in_name": "ซื้อเข้า (In)",
-                                "in_cost": "ราคาซื้อ (£)",
-                                "in_points": "คะแนนคาดการณ์ (Pred Points)",
-                                "roi_3gw": "กำไร 3 นัด (3-GW Gain)" # New Column
-                            }
-                            conservative_display = conservative_df.rename(columns=cols_to_ren_c)
-                            final_cols_c = [c for c in ["ขายออก (Out)", "ราคาขาย (£)", "ซื้อเข้า (In)", "ราคาซื้อ (£)", "คะแนนคาดการณ์ (Pred Points)", "กำไร 3 นัด (3-GW Gain)"] if c in conservative_display.columns]
-
-                            dynamic_height_c = 45 + (len(conservative_df) * 35)
-                            display_user_friendly_table(
-                                df=conservative_display[final_cols_c],
-                                title="",
-                                height=dynamic_height_c
-                            )
-                            st.caption("🔍 ราคาขายลดลง 0.1-0.2m เผื่อกรณีราคาเปลี่ยนแปลง")
-                        else:
-                            st.write("ไม่มีการแนะนำแบบระมัดระวัง")
-                        
+                            st.success("✅ ทีมของคุณยอดเยี่ยมแล้ว! ไม่จำเป็นต้องย้ายตัวในสัปดาห์นี้")                   
+                       
                         # Add warning
                         st.warning("⚠️ **สำคัญ**: ตรวจสอบราคาขายจริงในแอป FPL ก่อนทำ transfer")
                     
