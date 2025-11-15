@@ -776,7 +776,138 @@ def engineer_features_enhanced(elements: pd.DataFrame, teams: pd.DataFrame, nf: 
     elements["pred_points_enhanced"] = elements["pred_points_enhanced"].clip(lower=0, upper=25)
     elements.loc[elements['num_fixtures'] == 0, 'pred_points_enhanced'] = 0
 
+    # ===== เพิ่มบรรทัดนี้ (ตาม .docx) =====
+    elements['selection_score'] = elements.apply(calculate_smart_selection_score, axis=1)
+    # ===== จบ =====
+
     return elements
+
+def calculate_smart_selection_score(player_row):
+    """
+    คำนวณคะแนนสำหรับการจัดตัว (Selection Score) 
+    โดยพิจารณาหลายปัจจัย (ตามคำแนะนำใน .docx)
+    """
+    score = 0.0
+    
+    # 1. Base Points (40%)
+    score += player_row.get('pred_points', 0) * 0.4
+    
+    # 2. Expected Goals/Assists from Understat (30%)
+    # (เพิ่ม .get() เพื่อความปลอดภัย)
+    if player_row.get('xG', 0) > 0 or player_row.get('xA', 0) > 0:
+        # ใช้นาทีจาก 'minutes' ถ้ามี, ถ้าไม่มีให้หาร 1 (ปลอดภัยกว่า)
+        minutes_played = player_row.get('minutes', 0)
+        games_played_est = max(1, minutes_played / 90.0)
+        xgi_bonus = (player_row.get('xG', 0) * 5 + player_row.get('xA', 0) * 3) / games_played_est
+        score += xgi_bonus * 0.3
+    
+    # 3. Form (15%)
+    score += player_row.get('form', 0) * 0.15
+    
+    # 4. Fixture Difficulty (10%)
+    # (avg_fixture_ease 1.0 คือง่ายสุด, 0.0 คือยากสุด)
+    score += player_row.get('avg_fixture_ease', 0) * 10 * 0.1
+    
+    # 5. Play Probability (5%) - ลดคะแนนถ้าโอกาสลงเล่นต่ำ
+    score *= (0.5 + 0.5 * player_row.get('play_prob', 1.0))
+    
+    # 6. DGW Bonus (ถ้ามี Double Gameweek)
+    if player_row.get('num_fixtures', 1) == 2:
+        score *= 1.3
+    
+    # 7. BGW Penalty (ถ้าไม่มีเกม)
+    if player_row.get('num_fixtures', 1) == 0:
+        score = 0
+    
+    return score
+
+def smart_bench_order(bench_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    จัดเรียงตัวสำรองอย่างชาญฉลาด:
+    1. GK ต้องอยู่แรกเสมอ
+    2. Outfield: เรียงตาม "Auto-sub Value"
+    """
+    bench_gk = bench_df[bench_df['element_type'] == 1]
+    bench_outfield = bench_df[bench_df['element_type'] != 1].copy()
+    
+    # คำนวณ Auto-sub Value (โอกาสที่จะถูกเปลี่ยนตัวอัตโนมัติ)
+    bench_outfield['autosub_value'] = (
+        bench_outfield['play_prob'] * 0.4 +  # โอกาสลงเล่น
+        (bench_outfield.get('selection_score', bench_outfield['pred_points']) / 10) * 0.4 + # คะแนนคาด
+        (bench_outfield['num_fixtures'] > 0).astype(int) * 0.2  # มีนัดแข่งหรือไม่ (ใช้ .astype(int) เพื่อแปลง True/False เป็น 1/0)
+    )
+    
+    # เรียงจากมากไปน้อย (คนที่ควรถูก auto-sub มากที่สุดอยู่ลำดับแรก)
+    bench_outfield = bench_outfield.sort_values('autosub_value', ascending=False)
+    
+    ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+    return ordered_bench_df
+
+def select_captain_vice(xi_df: pd.DataFrame) -> Tuple[int, int]:
+    """
+    เลือกกัปตัน/รองกัปตันอย่างชาญฉลาด
+    """
+    xi_candidates = xi_df.copy()
+    
+    # คำนวณ Captain Score (ใช้ .get() เพื่อความปลอดภัย)
+    xi_candidates['captain_score'] = (
+        xi_candidates.get('selection_score', xi_candidates['pred_points']) * 0.5 +
+        xi_candidates.get('form', 0) * 0.2 +
+        xi_candidates.get('avg_fixture_ease', 0) * 10 * 0.2 + # avg_fixture_ease (1.0 = ง่าย)
+        (xi_candidates.get('xG', 0) + xi_candidates.get('xA', 0)) * 0.1
+    )
+    
+    # ถ้ามี DGW ให้โบนัส
+    xi_candidates.loc[xi_candidates['num_fixtures'] == 2, 'captain_score'] *= 1.5
+    
+    # เรียงและเลือก
+    sorted_candidates = xi_candidates.sort_values('captain_score', ascending=False)
+    cap_id = sorted_candidates.iloc[0].name
+    vc_id = sorted_candidates.iloc[1].name
+    
+    return cap_id, vc_id
+
+def analyze_lineup_insights(xi_df: pd.DataFrame, bench_df: pd.DataFrame) -> List[str]:
+    """
+    วิเคราะห์และให้คำแนะนำเกี่ยวกับการจัดตัว
+    """
+    insights = []
+    
+    # 1. เช็ค DGW/BGW
+    dgw_count = (xi_df['num_fixtures'] == 2).sum()
+    bgw_count = (xi_df['num_fixtures'] == 0).sum()
+    
+    if dgw_count > 0:
+        insights.append(f"✅ คุณมี {dgw_count} คนใน XI ที่มี Double Gameweek")
+    if bgw_count > 0:
+        insights.append(f"⚠️ คุณมี {bgw_count} คนใน XI ที่ไม่มีนัดแข่ง!")
+    
+    # 2. เช็คโอกาสลงเล่น
+    low_prob_players = xi_df[xi_df['play_prob'] < 0.75]
+    if len(low_prob_players) > 0:
+        names = ", ".join(low_prob_players['web_name'].tolist())
+        insights.append(f"⚠️ นักเตะที่อาจไม่ลงเล่น: {names} (โอกาส < 75%)")
+    
+    # 3. เช็ค Fixture Difficulty (avg_fixture_ease 0.3 คือยากมาก)
+    hard_fixtures = xi_df[xi_df['avg_fixture_ease'] < 0.3]
+    if len(hard_fixtures) > 2:
+        insights.append(f"⚠️ คุณมี {len(hard_fixtures)} คนที่เจอคู่แข่งยาก (ความง่าย < 0.3)")
+    
+    # 4. เช็ค xG/xA Leaders
+    if 'xG' in xi_df.columns and not xi_df.empty:
+        try:
+            top_xg_player = xi_df.nlargest(1, 'xG').iloc[0]
+            insights.append(f"🎯 นักเตะที่มี xG สูงสุดใน XI: {top_xg_player['web_name']} ({top_xg_player['xG']:.2f})")
+        except IndexError:
+            pass # เกิดขึ้นได้ถ้า xi_df ว่าง
+    
+    # 5. เช็ค Bench Strength
+    bench_score_col = 'selection_score' if 'selection_score' in bench_df.columns else 'pred_points'
+    bench_total = bench_df.get(bench_score_col, 0).sum()
+    if bench_total < 7.5:
+        insights.append(f"⚠️ ตัวสำรองของคุณคะแนนคาดการณ์ต่ำ (คะแนนรวม: {bench_total:.1f})")
+    
+    return insights
 
 # --- START: NEW FIXTURE PLANNER FUNCTIONS (v1.9.0) ---
 
@@ -1026,23 +1157,26 @@ def calculate_transfer_roi(player_out_id: int, player_in_id: int, current_gw: in
 def optimize_starting_xi(squad_players_df: pd.DataFrame) -> Tuple[List[int], List[int]]:
     """Return (start_ids, bench_ids) maximizing predicted points subject to FPL formation."""
     ids = list(squad_players_df.index)
-    pred_points = squad_players_df['pred_points']
     positions = squad_players_df['element_type']
 
     prob = LpProblem("XI_Optimization", LpMaximize)
     x = {i: LpVariable(f"x_{i}", cat=LpBinary) for i in ids}
-    # ดึงข้อมูล 'play_prob' มาใช้
-    play_probs = squad_players_df['play_prob']
 
-    # สร้าง 'คะแนนเป้าหมาย' ใหม่ที่เน้นความแน่นอน
-    # โดยการคูณ pred_points ซ้ำด้วย play_prob
-    # (ผู้เล่นที่โอกาสลง 100% (1.0) จะได้คะแนนเต็ม, ผู้เล่นที่โอกาสลง 50% (0.5) คะแนนจะถูกลดฮวบ)
-    objective_scores = pred_points * play_probs
-
-    # ใช้ 'objective_scores' ใหม่นี้แทน 'pred_points' เดิม
+    # ===== เปลี่ยนตรงนี้ (ตาม .docx) =====
+    # เช็คว่ามี column 'selection_score' หรือไม่
+    if 'selection_score' in squad_players_df.columns:
+        objective_scores = squad_players_df['selection_score']
+    else:
+        # Fallback ใช้วิธีเดิม (pred_points * play_prob)
+        pred_points = squad_players_df['pred_points']
+        play_probs = squad_players_df['play_prob']
+        objective_scores = pred_points * play_probs
+    # ===== จบการแก้ไข =====
+    
+    # ใช้ 'objective_scores' ใหม่นี้
     prob += lpSum([objective_scores.get(i, 0) * x[i] for i in ids])
 
-    # Constraints
+    # Constraints (เหมือนเดิม)
     prob += lpSum([x[i] for i in ids]) == 11
     prob += lpSum([x[i] for i in ids if positions.get(i) == 1]) == 1
     prob += lpSum([x[i] for i in ids if positions.get(i) == 2]) >= 3
@@ -2228,8 +2362,7 @@ def main():
                     xi_df = squad_df.loc[xi_ids].copy()
                     
                     # Add Captain/Vice
-                    cap_id = xi_df.sort_values("pred_points", ascending=False).iloc[0].name
-                    vc_id = xi_df.sort_values("pred_points", ascending=False).iloc[1].name
+                    cap_id, vc_id = select_captain_vice(xi_df)
                     xi_df['is_captain'] = xi_df.index == cap_id
                     xi_df['is_vice_captain'] = xi_df.index == vc_id
 
@@ -2258,10 +2391,12 @@ def main():
                     st.success(f"👑 Captain: **{xi_df.loc[cap_id]['web_name']}** | Vice-Captain: **{xi_df.loc[vc_id]['web_name']}**")
                     
                     bench_df = squad_df.loc[bench_ids].copy()
-                    bench_gk = bench_df[bench_df['element_type'] == 1]
-                    bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values(by=['play_prob', 'pred_points'],ascending=[False, False])
-                    ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                    ordered_bench_df = smart_bench_order(bench_df)
                     ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+
+                    insights = analyze_lineup_insights(xi_df, ordered_bench_df)
+                    if insights:
+                        st.info("💡 **คำแนะนำ:**\n\n" + "\n\n".join([f"- {i}" for i in insights]))
                     
                                 # --- ปรับปรุง Bench Display (เริ่ม) ---
                     bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']].copy()
@@ -2325,8 +2460,7 @@ def main():
                             xi_df = squad_df.loc[xi_ids].copy()
                             
                             # Add Captain/Vice
-                            cap_id = xi_df.sort_values("pred_points", ascending=False).iloc[0].name
-                            vc_id = xi_df.sort_values("pred_points", ascending=False).iloc[1].name
+                            cap_id, vc_id = select_captain_vice(xi_df)
                             xi_df['is_captain'] = xi_df.index == cap_id
                             xi_df['is_vice_captain'] = xi_df.index == vc_id
 
@@ -2376,10 +2510,12 @@ def main():
                                 st.info(f"💡 {full_note}")
                             
                             bench_df = squad_df.loc[bench_ids].copy()
-                            bench_gk = bench_df[bench_df['element_type'] == 1]
-                            bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values(by=['play_prob', 'pred_points'],ascending=[False, False])
-                            ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                            ordered_bench_df = smart_bench_order(bench_df)
                             ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+
+                            insights = analyze_lineup_insights(xi_df, ordered_bench_df)
+                            if insights:
+                                st.info("💡 **คำแนะนำ:**\n\n" + "\n\n".join([f"- {i}" for i in insights]))
                             
                                 # --- ปรับปรุง Bench Display (เริ่ม) ---
                             bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']].copy()
@@ -2681,8 +2817,7 @@ def main():
                                 xi_df_sim = sim_squad_df.loc[xi_ids_sim].copy()
                                 
                                 # Add Captain/Vice
-                                cap_id_sim = xi_df_sim.sort_values("pred_points", ascending=False).iloc[0].name
-                                vc_id_sim = xi_df_sim.sort_values("pred_points", ascending=False).iloc[1].name
+                                cap_id_sim, vc_id_sim = select_captain_vice(xi_df_sim)
                                 xi_df_sim['is_captain'] = xi_df_sim.index == cap_id_sim
                                 xi_df_sim['is_vice_captain'] = xi_df_sim.index == vc_id_sim
 
@@ -2712,10 +2847,12 @@ def main():
                                 
                                 # Display Bench
                                 bench_df = sim_squad_df.loc[bench_ids_sim].copy()
-                                bench_gk = bench_df[bench_df['element_type'] == 1]
-                                bench_outfield = bench_df[bench_df['element_type'] != 1].sort_values(by=['play_prob', 'pred_points'],ascending=[False, False])
-                                ordered_bench_df = pd.concat([bench_gk, bench_outfield])
+                                ordered_bench_df = smart_bench_order(bench_df)
                                 ordered_bench_df['pos'] = ordered_bench_df['element_type'].map(POSITIONS)
+
+                                insights = analyze_lineup_insights(xi_df_sim, ordered_bench_df)
+                                if insights:
+                                    st.info("💡 **คำแนะนำ:**\n\n" + "\n\n".join([f"- {i}" for i in insights]))
                                 
                                                                 # --- ปรับปรุง Bench Display (เริ่ม) ---
                                 bench_display_df = ordered_bench_df[['web_name', 'team_short', 'pos', 'pred_points']].copy()
